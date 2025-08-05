@@ -10,7 +10,7 @@ This project demonstrates a modern, AI-powered e-commerce search experience usin
 
 - **Backend**: Flask web application (`app.py`)
 - **Database**: Valkey with Vector Search module
-- **AI Models**: 
+- **AI Models**:
   - Local: Ollama (tinyllama) + sentence-transformers
   - Cloud: Google Gemini + Vertex AI embeddings
 - **Frontend**: HTML templates with Server-Sent Events (SSE)
@@ -26,7 +26,7 @@ This project demonstrates a modern, AI-powered e-commerce search experience usin
 
 ## Project Structure
 
-```
+```bash
 valkey-search-demo/
 ├── app.py                 # Main Flask application
 ├── load_data.py          # Data loading and embedding generation
@@ -48,6 +48,7 @@ valkey-search-demo/
 ## Data Models
 
 ### Product Schema
+
 ```python
 {
     'id': int,                    # Unique identifier
@@ -67,6 +68,7 @@ valkey-search-demo/
 ```
 
 ### User Schema
+
 ```python
 {
     'id': str,                    # User identifier
@@ -81,16 +83,19 @@ valkey-search-demo/
 ## API Endpoints
 
 ### Authentication
+
 - `GET /login` - Login form
 - `POST /login` - User authentication
 - `GET /logout` - Session termination
 
 ### Product Discovery
+
 - `GET /` or `/home` - Product homepage
 - `POST /search` - Keyword + vector search
 - `GET /product/<id>` - Product details with recommendations
 
 ### Real-time Features
+
 - `GET /stream/<cache_key>` - SSE endpoint for AI-generated content
 
 ## Search Implementation
@@ -103,12 +108,14 @@ valkey-search-demo/
 4. **Personalization**: Results tailored to user preferences
 
 ### Search Query Structure
+
 ```python
 # Valkey FT.SEARCH query
 query = f"({tag_filter})=>[KNN 25 @embedding $user_vec]"
 ```
 
 ### MMR Algorithm
+
 ```python
 def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5):
     # Balance relevance vs diversity
@@ -118,16 +125,19 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
 ## AI Integration
 
 ### Local Mode (Default)
+
 - **LLM**: Ollama with tinyllama (1.1B parameters)
 - **Embeddings**: sentence-transformers/all-MiniLM-L6-v2 (384 dims)
 - **Advantages**: Privacy, no API costs, offline capability
 
 ### Cloud Mode (Optional)
+
 - **LLM**: Google Gemini 1.5 Flash
 - **Embeddings**: Vertex AI text-embedding-004 (768 dims)
 - **Advantages**: Higher quality, faster processing
 
 ### Configuration
+
 ```python
 # Automatic detection based on GCP_PROJECT environment variable
 if os.getenv("GCP_PROJECT"):
@@ -139,16 +149,19 @@ else:
 ## Performance Optimizations
 
 ### Caching Strategy
+
 - **LLM Responses**: 2-hour TTL in Valkey
 - **Cache Keys**: `llm_cache:user:{user_id}:product:{product_id}`
 - **Background Generation**: Async processing with threading
 
 ### Vector Search Optimization
+
 - **Index Type**: HNSW (Hierarchical Navigable Small World)
 - **Distance Metric**: Cosine similarity
 - **Batch Processing**: 100 products per batch during data loading
 
 ### Database Schema
+
 ```python
 # Valkey index creation
 FT.CREATE products ON HASH PREFIX 1 product: SCHEMA
@@ -164,14 +177,16 @@ FT.CREATE products ON HASH PREFIX 1 product: SCHEMA
 ## Setup Instructions
 
 ### Prerequisites
+
 - Docker (for Valkey)
 - Python 3.10+
 - Optional: Google Cloud SDK (for cloud mode)
 
 ### Quick Start
+
 ```bash
 # 1. Start Valkey
-docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle
+docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle:
 
 # 2. Setup Python environment
 python3 -m venv venv
@@ -190,6 +205,7 @@ flask run --host=0.0.0.0 --port=5001
 ```
 
 ### Cloud Mode Setup
+
 ```bash
 # Set environment variables
 export GCP_PROJECT="your-project-id"
@@ -235,6 +251,7 @@ python3 load_data.py --flush
 ## Deployment Considerations
 
 ### Production Checklist
+
 - [ ] Use production WSGI server (Gunicorn, uWSGI)
 - [ ] Configure proper secret keys
 - [ ] Set up SSL/TLS termination
@@ -244,6 +261,7 @@ python3 load_data.py --flush
 - [ ] Configure logging and monitoring
 
 ### Scaling Options
+
 - **Horizontal**: Valkey Cluster mode for distributed storage
 - **Vertical**: Increase memory for larger datasets
 - **Caching**: Redis/Valkey for application-level caching
@@ -254,6 +272,7 @@ python3 load_data.py --flush
 ### Common Issues
 
 1. **Valkey Connection Failed**
+
    ```bash
    # Check if container is running
    docker ps
@@ -266,6 +285,7 @@ python3 load_data.py --flush
    - Check `VECTOR_DIM` configuration
 
 3. **Ollama Model Not Found**
+
    ```bash
    # List available models
    ollama list
@@ -300,6 +320,7 @@ This project is licensed under the terms specified in the LICENSE file.
 ## Support
 
 For issues and questions:
+
 1. Check this documentation
 2. Review the troubleshooting section
 3. Check existing GitHub issues
