@@ -12,7 +12,8 @@ This project demonstrates a modern, AI-powered e-commerce search experience usin
 - **Database**: Valkey with Vector Search module
 - **AI Models**:
   - Local: Ollama (tinyllama) + sentence-transformers
-  - Cloud: Google Gemini + Vertex AI embeddings
+  - Google Cloud: Gemini + Vertex AI embeddings
+  - AWS: Bedrock Nova Pro + Titan Text Embeddings v2
 - **Frontend**: HTML templates with Server-Sent Events (SSE)
 
 ### Key Features
@@ -63,7 +64,7 @@ valkey-search-demo/
     'link': str,                  # External link
     'search_tags': str,           # Comma-separated tags
     'region': str,                # Geographic region
-    'embedding': bytes            # Vector embedding (384/768 dims)
+    'embedding': bytes            # Vector embedding (384/768/1024 dims)
 }
 ```
 
@@ -130,17 +131,25 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
 - **Embeddings**: sentence-transformers/all-MiniLM-L6-v2 (384 dims)
 - **Advantages**: Privacy, no API costs, offline capability
 
-### Cloud Mode (Optional)
+### Google Cloud Mode (Optional)
 
 - **LLM**: Google Gemini 1.5 Flash
 - **Embeddings**: Vertex AI text-embedding-004 (768 dims)
 - **Advantages**: Higher quality, faster processing
 
+### AWS Bedrock Mode (Optional)
+
+- **LLM**: Amazon Nova Pro
+- **Embeddings**: Titan Text Embeddings v2 (1024 dims)
+- **Advantages**: AWS ecosystem integration, high performance
+
 ### Configuration
 
 ```python
-# Automatic detection based on GCP_PROJECT environment variable
-if os.getenv("GCP_PROJECT"):
+# Automatic detection based on environment variables
+if os.getenv("AWS_REGION"):
+    AI_MODE = "AWS"
+elif os.getenv("GCP_PROJECT"):
     AI_MODE = "GCP"
 else:
     AI_MODE = "LOCAL"
@@ -185,8 +194,11 @@ FT.CREATE products ON HASH PREFIX 1 product: SCHEMA
 ### Quick Start
 
 ```bash
+# 0. Pull valkey-bundle from the container registry
+docker pull valkey/valkey-bundle:8-alpine
+
 # 1. Start Valkey
-docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle:
+docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle:8-alpine
 
 # 2. Setup Python environment
 python3 -m venv venv
@@ -204,7 +216,7 @@ python3 load_data.py
 flask run --host=0.0.0.0 --port=5001
 ```
 
-### Cloud Mode Setup
+### Google Cloud Mode Setup
 
 ```bash
 # Set environment variables
@@ -216,6 +228,22 @@ gcloud auth application-default login
 
 # Load data with cloud embeddings
 python3 load_data.py --project your-project-id
+```
+
+### AWS Bedrock Mode Setup
+
+```bash
+# Set environment variables
+export AWS_REGION="us-east-1"
+# Optional if using IAM roles:
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+
+# Verify AWS configuration
+aws bedrock list-foundation-models --region us-east-1
+
+# Load data with AWS embeddings
+python3 load_data.py --aws-region us-east-1
 ```
 
 ## Development
@@ -291,6 +319,16 @@ python3 load_data.py --flush
    ollama list
    # Pull required model
    ollama pull tinyllama
+   ```
+
+4. **AWS Bedrock Access Issues**
+
+   ```bash
+   # Check AWS credentials
+   aws sts get-caller-identity
+   # Verify Bedrock access
+   aws bedrock list-foundation-models --region us-east-1
+   # Check IAM permissions for bedrock:InvokeModel
    ```
 
 4. **Memory Issues**

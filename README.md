@@ -7,10 +7,10 @@ This project is a fully-functional web application that demonstrates a modern, A
 The application allows users to log in as different "personas" and receive personalized product recommendations and descriptions based on their interests. These recommendations are generated through a hybrid search that combines traditional keyword filtering with advanced vector similarity search.
 
 **Key features demonstrated:**
-* **100% Local AI Stack:** All AI features run locally using Ollama and the sentence-transformers library.
+* **Multiple AI Backend Options:** Choose between Local (Ollama), Google Cloud (Gemini), or AWS Bedrock (Nova Pro) for AI processing.
 * **Hybrid Search:** Combining keyword (tag) search with vector similarity search.  
 * **Personalization:** Using user profile embeddings to tailor search results.  
-* **AI-Powered Content:** Leveraging Google's Gemini models to generate personalized sales pitches.  
+* **AI-Powered Content:** Leveraging advanced language models to generate personalized sales pitches.  
 * **High-Performance Caching:** Using Valkey to cache LLM responses, dramatically reducing latency.  
 * **Real-time UI Updates:** Using Server-Sent Events (SSE) to push AI-generated content to the browser without a page refresh.
 
@@ -20,7 +20,9 @@ Before you begin, ensure you have the following installed on your system:
 
 * [Docker](https://docs.docker.com/get-docker/)  
 * [Python 3.10+](https://www.python.org/downloads/)  
-* Google Cloud SDK (gcloud)
+* **Optional AI Backends:**
+  * Google Cloud SDK (gcloud) - for Google Gemini integration
+  * AWS CLI - for AWS Bedrock integration
 
 ## **Setup and Running the Demo**
 
@@ -64,9 +66,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### **Step 3: Install Ollama and Download AI Models**
+### **Step 3: Configure AI Backend**
 
-This demo uses Ollama to run a small Large Language Model on your machine.
+This demo supports three AI backend options. Choose one based on your preferences:
+
+#### **Option A: Local AI (Default - Ollama)**
+
+This option runs everything locally on your machine for privacy and offline capability.
 
 **1\. Install Ollama**
 
@@ -83,16 +89,69 @@ For this demo, we use tinyllama, a 1.1B parameter model that is very fast on CPU
 ollama pull tinyllama
 ```
 
+#### **Option B: Google Cloud AI (Gemini)**
+
+To use Google's Gemini models, set up your Google Cloud environment:
+
+**1\. Set Environment Variables**
+```bash
+export GCP_PROJECT="your-project-id"
+export GCP_LOCATION="us-central1"
+```
+
+**2\. Authenticate with Google Cloud**
+```bash
+gcloud auth application-default login
+```
+
+#### **Option C: AWS Bedrock (Nova Pro)**
+
+To use AWS Bedrock with Amazon Nova Pro, configure your AWS environment:
+
+**1\. Set Environment Variables**
+```bash
+export AWS_REGION="us-east-1"
+# Optional if using IAM roles:
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+```
+
+**2\. Verify AWS Configuration**
+```bash
+aws bedrock list-foundation-models --region us-east-1
+```
+
+**Note:** AWS Bedrock requires appropriate IAM permissions for the `bedrock:InvokeModel` action on Nova Pro and Titan Text Embeddings models.
+
 ### **Step 4: Run the Data Loading Script**
 
-This script generates vector embeddings locally using the `sentence-transformers` library and populates the Valkey instance with the product and user data.
-The script supports connecting to both standalone and cluster Valkey servers usiddng the \--cluster flag.
+This script generates vector embeddings and populates the Valkey instance with product and user data. The embedding method depends on your chosen AI backend:
 
-\# Load product data from the included CSV and generate embeddings  
-\# Add \--cluster if applicable  
+**For Local AI (Default):**
 ```bash
-# This may take a few minutes as it processes data and generates embeddings
+# Uses sentence-transformers library for embeddings (384 dimensions)
 python3 load_data.py
+```
+
+**For Google Cloud AI:**
+```bash
+# Uses Vertex AI embeddings (768 dimensions)
+python3 load_data.py --project your-project-id
+```
+
+**For AWS Bedrock:**
+```bash
+# Uses Titan Text Embeddings v2 (1024 dimensions)
+python3 load_data.py --aws-region us-east-1
+```
+
+**Additional Options:**
+```bash
+# Add --cluster if using Valkey Cluster
+python3 load_data.py --cluster
+
+# Flush existing data before loading
+python3 load_data.py --flush
 ```
 ### **Step 5: Run the Web Application**
 

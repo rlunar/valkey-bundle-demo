@@ -35,7 +35,34 @@ app.config['PLACEHOLDER_IMAGE_URL']="https://via.placeholder.com/300.png?text=No
 
 # --- Dynamic AI Configuration ---
 ai_client = None
-if app.config.get('GCP_PROJECT'):
+# Priority order: AWS > GCP > LOCAL
+if os.getenv("AWS_REGION"):
+    import boto3
+    from botocore.exceptions import ClientError, NoCredentialsError
+    app.config['AI_MODE'] = "AWS"
+    app.config['AWS_REGION'] = os.getenv("AWS_REGION")
+    app.config['LLM_MODEL_NAME'] = "amazon.nova-pro-v1:0"
+    app.config['EMBEDDING_MODEL_NAME'] = "amazon.titan-embed-text-v2:0"
+    app.config['VECTOR_DIM'] = 1024
+    print(f"--- AI Mode Detected: {app.config['AI_MODE']} ---")
+    try:
+        print(f"Initializing AWS Bedrock client for region '{app.config['AWS_REGION']}'...")
+        ai_client = boto3.client(
+            'bedrock-runtime',
+            region_name=app.config['AWS_REGION']
+        )
+        print("✅ AWS Bedrock client initialized.")
+    except NoCredentialsError as e:
+        print(f"WARNING: AWS credentials not found. AI features will be mocked. Details: {e}")
+        ai_client = None
+    except ClientError as e:
+        print(f"WARNING: AWS client error. AI features will be mocked. Details: {e}")
+        ai_client = None
+    except Exception as e:
+        print(f"WARNING: Could not initialize AWS Bedrock client. AI features will be mocked. Details: {e}")
+        ai_client = None
+
+elif app.config.get('GCP_PROJECT'):
     from google import genai
     from google.genai import types
     app.config['AI_MODE'] = "GCP"
@@ -198,7 +225,21 @@ def get_personalized_descriptions_async(user_profile, products):
             desc = None
 
             try:
-                if app.config['AI_MODE'] == "GCP":
+                if app.config['AI_MODE'] == "AWS":
+                    response = ai_client.invoke_model(
+                        modelId=app.config['LLM_MODEL_NAME'],
+                        body=json.dumps({
+                            "inputText": prompt,
+                            "textGenerationConfig": {
+                                "maxTokenCount": 200,
+                                "temperature": 0.7,
+                                "topP": 0.9
+                            }
+                        })
+                    )
+                    response_body = json.loads(response['body'].read())
+                    desc = response_body['results'][0]['outputText'] if response_body.get('results') else None
+                elif app.config['AI_MODE'] == "GCP":
                     response = ai_client.generate_content(
                         model=app.config['LLM_MODEL_NAME'],
                         contents=[prompt]
