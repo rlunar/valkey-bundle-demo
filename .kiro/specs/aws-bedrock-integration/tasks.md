@@ -13,7 +13,7 @@
   - Initialize boto3 bedrock-runtime client with proper error handling
   - _Requirements: 1.1, 3.1, 3.2, 3.5_
 
-- [ ] 3. Implement AWS Bedrock text generation in app.py
+- [x] 3. Implement AWS Bedrock text generation in app.py
 
   - Add Nova Pro text generation function in the get_personalized_descriptions_async method
   - Implement proper JSON request/response handling for Nova Pro API

@@ -198,6 +198,75 @@ def get_products_by_ids(ids):
     return prods
 
 
+# --- AWS Bedrock Text Generation ---
+def generate_with_nova_pro(client, prompt, user_name, product_name):
+    """
+    Generate personalized description using Amazon Nova Pro with proper error handling.
+    """
+    if not client:
+        print("WARNING: AWS Bedrock client not available, using fallback response.")
+        return get_aws_fallback_description(user_name, product_name)
+    
+    try:
+        response = client.invoke_model(
+            modelId=app.config['LLM_MODEL_NAME'],
+            body=json.dumps({
+                "inputText": prompt,
+                "textGenerationConfig": {
+                    "maxTokenCount": 200,
+                    "temperature": 0.7,
+                    "topP": 0.9
+                }
+            })
+        )
+        
+        response_body = json.loads(response['body'].read())
+        
+        # Validate response structure
+        if not response_body.get('results') or not response_body['results']:
+            raise ValueError("Empty results in Nova Pro response")
+        
+        output_text = response_body['results'][0].get('outputText')
+        if not output_text or not output_text.strip():
+            raise ValueError("Empty output text in Nova Pro response")
+        
+        return output_text.strip()
+        
+    except NoCredentialsError as e:
+        print(f"WARNING: AWS credentials not found for Nova Pro generation. Details: {e}")
+        return get_aws_fallback_description(user_name, product_name)
+    
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        if error_code == 'ThrottlingException':
+            print(f"WARNING: AWS rate limiting encountered for Nova Pro. Details: {e}")
+        elif error_code == 'ValidationException':
+            print(f"WARNING: AWS validation error for Nova Pro request. Details: {e}")
+        elif error_code == 'ModelNotReadyException':
+            print(f"WARNING: Nova Pro model not ready. Details: {e}")
+        else:
+            print(f"WARNING: AWS client error during Nova Pro generation. Code: {error_code}, Details: {e}")
+        return get_aws_fallback_description(user_name, product_name)
+    
+    except json.JSONDecodeError as e:
+        print(f"WARNING: Failed to parse Nova Pro response JSON. Details: {e}")
+        return get_aws_fallback_description(user_name, product_name)
+    
+    except Exception as e:
+        print(f"WARNING: Unexpected error during Nova Pro generation. Details: {e}")
+        return get_aws_fallback_description(user_name, product_name)
+
+
+def get_aws_fallback_description(user_name, product_name):
+    """
+    Generate fallback description when AWS Bedrock is unavailable.
+    """
+    return (
+        f"For an individual like {user_name}, the {product_name} "
+        f"represents excellent value and quality, perfectly suited to your needs."
+    )
+
+
 # --- Async LLM Descriptions ---
 def get_personalized_descriptions_async(user_profile, products):
     """
@@ -226,19 +295,7 @@ def get_personalized_descriptions_async(user_profile, products):
 
             try:
                 if app.config['AI_MODE'] == "AWS":
-                    response = ai_client.invoke_model(
-                        modelId=app.config['LLM_MODEL_NAME'],
-                        body=json.dumps({
-                            "inputText": prompt,
-                            "textGenerationConfig": {
-                                "maxTokenCount": 200,
-                                "temperature": 0.7,
-                                "topP": 0.9
-                            }
-                        })
-                    )
-                    response_body = json.loads(response['body'].read())
-                    desc = response_body['results'][0]['outputText'] if response_body.get('results') else None
+                    desc = generate_with_nova_pro(ai_client, prompt, user_profile['name'], product['name'])
                 elif app.config['AI_MODE'] == "GCP":
                     response = ai_client.generate_content(
                         model=app.config['LLM_MODEL_NAME'],
@@ -257,10 +314,13 @@ def get_personalized_descriptions_async(user_profile, products):
 
             except Exception as e:
                 print(f"WARNING: [{app.config['AI_MODE']} API Call Failed] using mock response. Details: {e}")
-                desc = (
-                    f"For an individual like {user_profile['name']}, the {product['name']} "
-                    f"is a standout choice, aligning perfectly with your unique interests and needs."
-                )
+                if app.config['AI_MODE'] == "AWS":
+                    desc = get_aws_fallback_description(user_profile['name'], product['name'])
+                else:
+                    desc = (
+                        f"For an individual like {user_profile['name']}, the {product['name']} "
+                        f"is a standout choice, aligning perfectly with your unique interests and needs."
+                    )
             valkey_client.set(cache_key, desc, ex=7200)
         ## --- DELTA END ---
 
