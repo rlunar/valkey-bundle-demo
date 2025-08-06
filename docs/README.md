@@ -232,6 +232,9 @@ python3 load_data.py --project your-project-id
 
 ### AWS Bedrock Mode Setup
 
+For detailed AWS Bedrock setup instructions, see [AWS Bedrock Setup Guide](aws-bedrock-setup.md).
+
+Quick setup:
 ```bash
 # Set environment variables
 export AWS_REGION="us-east-1"
