@@ -41,7 +41,7 @@
   - Update batch processing logic to handle AWS embedding responses
   - _Requirements: 1.3, 5.2, 5.3_
 
-- [ ] 7. Update Valkey index creation for dynamic vector dimensions
+- [x] 7. Update Valkey index creation for dynamic vector dimensions
 
   - Modify index creation logic to use the correct vector dimension based on AI_MODE
   - Ensure index creation works correctly with 1024-dimensional vectors for AWS
