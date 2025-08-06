@@ -671,42 +671,93 @@ except FileNotFoundError:
     exit(1)
 
 print(f"\n--- Generating Persona Embeddings and Storing {len(df)} in Valkey  ---")
-pipe = r.pipeline(transaction=False)
-for index, persona in tqdm(df.iterrows(), total=df.shape[0], desc="Processing Personas"):
-    user_id = persona['id']
-    texts_to_embed = []
-    texts_to_embed.append( f"User Persona: {persona['bio']} User Interests: {persona['interests_for_embedding']}")
 
+# Process personas in batches for better efficiency, especially for AWS Bedrock (Requirement 5.2)
+PERSONA_BATCH_SIZE = 50  # Smaller batch size for personas to balance efficiency and memory usage
+pipe = r.pipeline(transaction=False)
+
+for i in tqdm(range(0, len(df), PERSONA_BATCH_SIZE), desc="Processing Persona Batches"):
+    batch_df = df.iloc[i:i+PERSONA_BATCH_SIZE]
+    
+    # Prepare texts for batch embedding generation
+    texts_to_embed = []
+    persona_info = []  # Store persona data for later processing
+    
+    for index, persona in batch_df.iterrows():
+        user_id = persona['id']
+        text = f"User Persona: {persona['bio']} User Interests: {persona['interests_for_embedding']}"
+        texts_to_embed.append(text)
+        persona_info.append((index, persona, user_id))
+    
+    # Generate embeddings for the entire batch
     try:
         if AI_MODE == "AWS":
-            # Use the same batch function for consistency, even for single persona
+            # Use batch processing for AWS Bedrock embeddings (Requirement 5.2)
             embedding_vectors = generate_embeddings_with_titan(bedrock_client, texts_to_embed)
-            embedding_vector = embedding_vectors[0]
         elif AI_MODE == "GCP":
             response = model.get_embeddings(texts_to_embed)
-            embedding_vector = [item.values for item in response][0]
-        else: # LOCAL mode
-            embedding_vector = model.encode(texts_to_embed, convert_to_numpy=True)
+            embedding_vectors = [item.values for item in response]
+        else:  # LOCAL mode
+            embedding_vectors = model.encode(texts_to_embed, convert_to_numpy=True)
     except Exception as e:
-        # Enhanced error handling for persona embedding generation (Requirement 4.5)
-        print(f"WARNING: Could not generate embedding for persona {user_id} ({persona.get('name', 'Unknown')}). "
-              f"Using random vector fallback. Processing will continue with remaining personas. Details: {e}")
-        embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
-
-    # Prepare data for Valkey Hash. The purchase_history is already a JSON string from the CSV.
-    persona_data = {
-        "id": user_id,
-        "name": persona.get("name", f"User {user_id}"),
-        "bio": persona.get("bio", ""),
-        "purchase_history": persona.get("purchase_history", "[]"),
-        "embedding": np.array(embedding_vector, dtype=np.float32).tobytes(),
-        "avatar": generate_avatar_data_uri(user_id)
-    }
-    pipe.hset(user_id, mapping=persona_data)
+        # Enhanced error handling for persona batch embedding generation (Requirement 5.3)
+        print(f"WARNING: Could not generate embeddings for persona batch {i//PERSONA_BATCH_SIZE + 1}. "
+              f"Using random vector fallbacks for all personas in this batch. "
+              f"Processing will continue with remaining batches. Details: {e}")
+        # Create fallback embeddings for the entire batch
+        embedding_vectors = [np.random.rand(VECTOR_DIM).astype(np.float32) for _ in range(len(texts_to_embed))]
+    
+    # Process each persona in the batch with its corresponding embedding
+    for (index, persona, user_id), embedding_vector in zip(persona_info, embedding_vectors):
+        try:
+            # Ensure embedding_vector is properly formatted
+            if not isinstance(embedding_vector, np.ndarray):
+                embedding_vector = np.array(embedding_vector, dtype=np.float32)
+            
+            # Prepare data for Valkey Hash. The purchase_history is already a JSON string from the CSV.
+            persona_data = {
+                "id": user_id,
+                "name": persona.get("name", f"User {user_id}"),
+                "bio": persona.get("bio", ""),
+                "purchase_history": persona.get("purchase_history", "[]"),
+                "embedding": embedding_vector.tobytes(),
+                "avatar": generate_avatar_data_uri(user_id)
+            }
+            pipe.hset(user_id, mapping=persona_data)
+            
+        except Exception as e:
+            # Individual persona error handling (Requirement 5.3)
+            print(f"WARNING: Could not process persona {user_id} ({persona.get('name', 'Unknown')}). "
+                  f"Using random vector fallback. Processing will continue with remaining personas. Details: {e}")
+            
+            # Create fallback embedding and data
+            fallback_embedding = np.random.rand(VECTOR_DIM).astype(np.float32)
+            persona_data = {
+                "id": user_id,
+                "name": persona.get("name", f"User {user_id}"),
+                "bio": persona.get("bio", ""),
+                "purchase_history": persona.get("purchase_history", "[]"),
+                "embedding": fallback_embedding.tobytes(),
+                "avatar": generate_avatar_data_uri(user_id)
+            }
+            pipe.hset(user_id, mapping=persona_data)
 
 try:
     print("Saving personas to Valkey ...")
     pipe.execute()
     print("✅ Successfully stored personas in Valkey.")
+    
+    # Display final statistics for persona processing
+    if AI_MODE == "AWS":
+        print(f"✅ AWS Bedrock persona processing completed:")
+        print(f"   - Total personas processed: {len(df)}")
+        print(f"   - Batch size used: {PERSONA_BATCH_SIZE}")
+        print(f"   - Vector dimension: {VECTOR_DIM} (Titan Text Embeddings v2)")
+        print(f"   - All personas stored successfully in Valkey")
+    
 except Exception as e:
     print(f"❌ Failed to save personas to Valkey. Error: {e}")
+    if AI_MODE == "AWS":
+        print(f"❌ AWS Bedrock persona processing failed during Valkey storage")
+        print(f"   - Personas processed: {len(df)}")
+        print(f"   - Error occurred during final storage step")

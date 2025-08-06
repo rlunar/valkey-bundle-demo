@@ -55,7 +55,7 @@
   - Add proper logging for AWS errors without exposing sensitive information
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 9. Add AWS persona embedding generation in load_data.py
+- [x] 9. Add AWS persona embedding generation in load_data.py
 
   - Update persona processing section to support AWS Bedrock embeddings
   - Implement error handling for persona embedding generation
