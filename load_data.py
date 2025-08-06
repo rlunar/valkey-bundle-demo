@@ -142,6 +142,71 @@ def generate_avatar_data_uri(user_id: str) -> str:
     b64_svg = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
     return f"data:image/svg+xml;base64,{b64_svg}"
 
+def generate_embeddings_with_titan(client, texts):
+    """
+    Generate embeddings using Amazon Titan Text Embeddings v2 with proper error handling.
+    
+    Args:
+        client: boto3 bedrock-runtime client
+        texts: List of texts to embed
+    
+    Returns:
+        List of embedding vectors (1024-dimensional)
+    """
+    embeddings = []
+    aws_success_count = 0
+    aws_fallback_count = 0
+    
+    for text in texts:
+        try:
+            if client:
+                # Call Titan Text Embeddings v2 API
+                response = client.invoke_model(
+                    modelId=EMBEDDING_MODEL_NAME,
+                    body=json.dumps({
+                        "inputText": text,
+                        "dimensions": 1024,
+                        "normalize": True
+                    })
+                )
+                response_body = json.loads(response['body'].read())
+                embeddings.append(response_body['embedding'])
+                aws_success_count += 1
+            else:
+                # Fallback to random vector if client is not available
+                embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
+                aws_fallback_count += 1
+        except Exception as e:
+            # Handle AWS-specific errors with detailed logging
+            if hasattr(e, 'response') and 'Error' in e.response:
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_message = e.response.get('Error', {}).get('Message', str(e))
+                
+                if error_code == 'ThrottlingException':
+                    print(f"WARNING: AWS rate limiting encountered. Using random vector fallback. Details: {error_message}")
+                elif error_code == 'ValidationException':
+                    print(f"WARNING: AWS validation error for embedding request. Using random vector fallback. Details: {error_message}")
+                elif error_code == 'AccessDeniedException':
+                    print(f"WARNING: AWS access denied for embedding request. Check permissions. Using random vector fallback. Details: {error_message}")
+                elif error_code == 'ServiceUnavailableException':
+                    print(f"WARNING: AWS Bedrock service unavailable. Using random vector fallback. Details: {error_message}")
+                else:
+                    print(f"WARNING: AWS embedding generation failed ({error_code}). Using random vector fallback. Details: {error_message}")
+            else:
+                print(f"WARNING: AWS embedding generation failed for text. Using random vector. Details: {e}")
+            
+            # Use random vector as fallback (Requirement 5.3)
+            embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
+            aws_fallback_count += 1
+    
+    # Display progress and success/failure statistics (Requirement 5.5)
+    if aws_success_count > 0 or aws_fallback_count > 0:
+        total_processed = aws_success_count + aws_fallback_count
+        success_rate = (aws_success_count / total_processed) * 100 if total_processed > 0 else 0
+        print(f"AWS Batch Stats: {aws_success_count}/{total_processed} successful ({success_rate:.1f}%), {aws_fallback_count} fallbacks")
+    
+    return embeddings
+
 # --- 1. Initialize Clients ---
 try:
     print(f"\n--- AI Mode Detected: {AI_MODE} ---")
@@ -300,48 +365,7 @@ for i in tqdm(range(0, len(df), BATCH_SIZE), desc="Processing Batches"):
         texts_to_embed.append(text)
 
     if AI_MODE == "AWS":
-        embedding_vectors = []
-        aws_success_count = 0
-        aws_fallback_count = 0
-        
-        for text in texts_to_embed:
-            try:
-                if bedrock_client:
-                    response = bedrock_client.invoke_model(
-                        modelId=EMBEDDING_MODEL_NAME,
-                        body=json.dumps({
-                            "inputText": text,
-                            "dimensions": 1024,
-                            "normalize": True
-                        })
-                    )
-                    response_body = json.loads(response['body'].read())
-                    embedding_vectors.append(response_body['embedding'])
-                    aws_success_count += 1
-                else:
-                    # Fallback to random vector if client is not available
-                    embedding_vectors.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
-                    aws_fallback_count += 1
-            except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-                if error_code == 'ThrottlingException':
-                    print(f"WARNING: AWS rate limiting encountered. Using random vector fallback.")
-                elif error_code == 'ValidationException':
-                    print(f"WARNING: AWS validation error for embedding request. Using random vector fallback.")
-                else:
-                    print(f"WARNING: AWS embedding generation failed ({error_code}). Using random vector fallback.")
-                embedding_vectors.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
-                aws_fallback_count += 1
-            except Exception as e:
-                print(f"WARNING: AWS embedding generation failed for text. Using random vector. Details: {e}")
-                embedding_vectors.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
-                aws_fallback_count += 1
-        
-        # Display progress and success/failure statistics (Requirement 5.5)
-        if aws_success_count > 0 or aws_fallback_count > 0:
-            total_processed = aws_success_count + aws_fallback_count
-            success_rate = (aws_success_count / total_processed) * 100 if total_processed > 0 else 0
-            print(f"AWS Batch Stats: {aws_success_count}/{total_processed} successful ({success_rate:.1f}%), {aws_fallback_count} fallbacks")
+        embedding_vectors = generate_embeddings_with_titan(bedrock_client, texts_to_embed)
     elif AI_MODE == "GCP":
         response = model.get_embeddings(texts_to_embed)
         embedding_vectors = [item.values for item in response]
@@ -438,30 +462,14 @@ for index, persona in tqdm(df.iterrows(), total=df.shape[0], desc="Processing Pe
 
     try:
         if AI_MODE == "AWS":
-            if bedrock_client:
-                response = bedrock_client.invoke_model(
-                    modelId=EMBEDDING_MODEL_NAME,
-                    body=json.dumps({
-                        "inputText": texts_to_embed[0],
-                        "dimensions": 1024,
-                        "normalize": True
-                    })
-                )
-                response_body = json.loads(response['body'].read())
-                embedding_vector = response_body['embedding']
-            else:
-                # Fallback to random vector if client is not available
-                print(f"WARNING: AWS Bedrock client not available for persona {user_id}. Using random vector.")
-                embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
+            # Use the same batch function for consistency, even for single persona
+            embedding_vectors = generate_embeddings_with_titan(bedrock_client, texts_to_embed)
+            embedding_vector = embedding_vectors[0]
         elif AI_MODE == "GCP":
             response = model.get_embeddings(texts_to_embed)
             embedding_vector = [item.values for item in response][0]
         else: # LOCAL mode
             embedding_vector = model.encode(texts_to_embed, convert_to_numpy=True)
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-        print(f"WARNING: AWS embedding generation failed for persona {user_id} ({error_code}). Using random vector.")
-        embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
     except Exception as e:
         print(f"WARNING: Could not generate embedding for persona {user_id}. Using random vector. Details: {e}")
         embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)

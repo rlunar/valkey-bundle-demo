@@ -34,7 +34,7 @@
   - Add command-line argument --aws-region for explicit AWS mode selection
   - _Requirements: 3.1, 3.2, 5.1_
 
-- [ ] 6. Implement AWS Bedrock embedding generation in load_data.py
+- [x] 6. Implement AWS Bedrock embedding generation in load_data.py
 
   - Add Titan Text Embeddings v2 integration for batch embedding generation
   - Implement proper error handling for embedding API calls with fallback to random vectors
