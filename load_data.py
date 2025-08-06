@@ -142,9 +142,187 @@ def generate_avatar_data_uri(user_id: str) -> str:
     b64_svg = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
     return f"data:image/svg+xml;base64,{b64_svg}"
 
+def handle_aws_embedding_error(error, context="embedding generation"):
+    """
+    Centralized AWS error handling for embedding generation with proper logging.
+    
+    Args:
+        error: The exception that occurred
+        context: Context string for logging
+    
+    Returns:
+        None (error is logged, fallback handled by caller)
+    """
+    # Import additional AWS exceptions
+    try:
+        from botocore.exceptions import EndpointConnectionError
+    except ImportError:
+        EndpointConnectionError = None
+    
+    # Handle AWS credential errors (Requirement 4.2)
+    if isinstance(error, NoCredentialsError):
+        print(f"WARNING: AWS credentials not found for {context}. "
+              f"Please ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set, or use IAM roles. "
+              f"Details: Credentials not available")  # Don't expose full credential error
+        return
+    
+    # Handle endpoint connection errors (network issues)
+    elif EndpointConnectionError and isinstance(error, EndpointConnectionError):
+        print(f"WARNING: Cannot connect to AWS endpoint for {context}. "
+              f"Check network connectivity and AWS region configuration. "
+              f"Details: Connection failed")  # Don't expose full endpoint details
+        return
+    
+    # Handle AWS client errors with specific error codes (Requirements 4.1, 4.3)
+    elif isinstance(error, ClientError):
+        error_code = error.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = error.response.get('Error', {}).get('Message', 'AWS service error')
+        
+        # Sanitize error message to avoid exposing sensitive information (Requirement 4.5)
+        sanitized_message = _sanitize_embedding_error_message(error_message)
+        
+        if error_code == 'ThrottlingException':
+            print(f"WARNING: AWS rate limiting encountered for {context}. "
+                  f"Consider implementing request batching or delays. Details: {sanitized_message}")
+        
+        elif error_code == 'ValidationException':
+            print(f"WARNING: AWS validation error for {context}. "
+                  f"Check request parameters and input text format. Details: {sanitized_message}")
+        
+        elif error_code == 'AccessDeniedException':
+            print(f"WARNING: AWS access denied for {context}. "
+                  f"Check IAM permissions for bedrock:InvokeModel on {EMBEDDING_MODEL_NAME}. Details: {sanitized_message}")
+        
+        elif error_code == 'ServiceUnavailableException':
+            print(f"WARNING: AWS Bedrock service unavailable for {context}. "
+                  f"Service may be experiencing issues or model unavailable in region. Details: {sanitized_message}")
+        
+        elif error_code == 'ModelNotReadyException':
+            print(f"WARNING: AWS embedding model not ready for {context}. "
+                  f"Model may be loading or unavailable in region {AWS_REGION}. Details: {sanitized_message}")
+        
+        elif error_code == 'InternalServerException':
+            print(f"WARNING: AWS internal server error for {context}. "
+                  f"Temporary service issue. Details: {sanitized_message}")
+        
+        elif error_code == 'ResourceNotFoundException':
+            print(f"WARNING: AWS resource not found for {context}. "
+                  f"Model may not exist in this region. Details: {sanitized_message}")
+        
+        elif error_code == 'ModelTimeoutException':
+            print(f"WARNING: AWS model timeout for {context}. "
+                  f"Model processing took too long. Details: {sanitized_message}")
+        
+        else:
+            print(f"WARNING: AWS client error for {context}. "
+                  f"Error code: {error_code}. Details: {sanitized_message}")
+    
+    # Handle JSON parsing errors
+    elif isinstance(error, json.JSONDecodeError):
+        print(f"WARNING: Failed to parse AWS response JSON for {context}. "
+              f"Response may be malformed. Details: Invalid JSON response")
+    
+    # Handle network and timeout errors
+    elif hasattr(error, '__class__') and 'timeout' in error.__class__.__name__.lower():
+        print(f"WARNING: Network timeout for {context}. "
+              f"Check network connectivity to AWS services. Details: Request timeout")
+    
+    # Handle general exceptions
+    else:
+        print(f"WARNING: Unexpected error for {context}. Details: {type(error).__name__}")
+
+def _sanitize_embedding_error_message(message):
+    """
+    Sanitize error messages to remove potentially sensitive information.
+    
+    Args:
+        message: Original error message
+    
+    Returns:
+        Sanitized error message without sensitive information
+    """
+    if not message:
+        return "AWS service error"
+    
+    # Remove potential access keys, tokens, or other sensitive patterns
+    import re
+    
+    # Remove AWS access key patterns
+    message = re.sub(r'AKIA[0-9A-Z]{16}', '[ACCESS_KEY_REDACTED]', message)
+    
+    # Remove potential secret key patterns
+    message = re.sub(r'[A-Za-z0-9/+=]{40}', '[SECRET_REDACTED]', message)
+    
+    # Remove session token patterns
+    message = re.sub(r'[A-Za-z0-9/+=]{100,}', '[TOKEN_REDACTED]', message)
+    
+    # Remove IP addresses
+    message = re.sub(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', '[IP_REDACTED]', message)
+    
+    # Remove potential ARNs with account numbers
+    message = re.sub(r'arn:aws:[^:]*:[^:]*:\d{12}:[^:]*', '[ARN_REDACTED]', message)
+    
+    # Truncate very long messages that might contain sensitive data
+    if len(message) > 200:
+        message = message[:200] + "... [TRUNCATED]"
+    
+    return message
+
+def retry_embedding_with_backoff(client, text, max_retries=2, base_delay=1.0):
+    """
+    Retry embedding generation with exponential backoff for rate limiting.
+    
+    Args:
+        client: boto3 bedrock-runtime client
+        text: Text to embed
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds
+    
+    Returns:
+        Embedding vector or None if all retries failed
+    """
+    import time
+    
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.invoke_model(
+                modelId=EMBEDDING_MODEL_NAME,
+                body=json.dumps({
+                    "inputText": text,
+                    "dimensions": 1024,
+                    "normalize": True
+                })
+            )
+            response_body = json.loads(response['body'].read())
+            
+            # Validate response structure
+            if 'embedding' not in response_body:
+                raise ValueError("No embedding in Titan response")
+            
+            return response_body['embedding']
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            
+            if error_code == 'ThrottlingException' and attempt < max_retries:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                print(f"INFO: Rate limited, retrying embedding in {delay:.1f} seconds (attempt {attempt + 1}/{max_retries + 1})")
+                time.sleep(delay)
+                continue
+            else:
+                # Don't retry for non-throttling errors or max retries reached
+                handle_aws_embedding_error(e, "Titan embedding generation")
+                return None
+        
+        except Exception as e:
+            handle_aws_embedding_error(e, "Titan embedding generation")
+            return None
+    
+    return None
+
 def generate_embeddings_with_titan(client, texts):
     """
-    Generate embeddings using Amazon Titan Text Embeddings v2 with proper error handling.
+    Generate embeddings using Amazon Titan Text Embeddings v2 with comprehensive error handling.
     
     Args:
         client: boto3 bedrock-runtime client
@@ -156,46 +334,31 @@ def generate_embeddings_with_titan(client, texts):
     embeddings = []
     aws_success_count = 0
     aws_fallback_count = 0
+    aws_retry_count = 0
     
-    for text in texts:
+    for i, text in enumerate(texts):
         try:
             if client:
-                # Call Titan Text Embeddings v2 API
-                response = client.invoke_model(
-                    modelId=EMBEDDING_MODEL_NAME,
-                    body=json.dumps({
-                        "inputText": text,
-                        "dimensions": 1024,
-                        "normalize": True
-                    })
-                )
-                response_body = json.loads(response['body'].read())
-                embeddings.append(response_body['embedding'])
-                aws_success_count += 1
+                # Use retry mechanism for rate limiting (Requirement 4.3)
+                embedding = retry_embedding_with_backoff(client, text)
+                
+                if embedding is not None:
+                    embeddings.append(embedding)
+                    aws_success_count += 1
+                else:
+                    # Retry failed, use fallback
+                    print(f"INFO: Using random vector fallback for text {i+1}/{len(texts)}")
+                    embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
+                    aws_fallback_count += 1
             else:
-                # Fallback to random vector if client is not available
+                # Client not available, use fallback (Requirement 4.4)
                 embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
                 aws_fallback_count += 1
-        except Exception as e:
-            # Handle AWS-specific errors with detailed logging
-            if hasattr(e, 'response') and 'Error' in e.response:
-                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-                error_message = e.response.get('Error', {}).get('Message', str(e))
                 
-                if error_code == 'ThrottlingException':
-                    print(f"WARNING: AWS rate limiting encountered. Using random vector fallback. Details: {error_message}")
-                elif error_code == 'ValidationException':
-                    print(f"WARNING: AWS validation error for embedding request. Using random vector fallback. Details: {error_message}")
-                elif error_code == 'AccessDeniedException':
-                    print(f"WARNING: AWS access denied for embedding request. Check permissions. Using random vector fallback. Details: {error_message}")
-                elif error_code == 'ServiceUnavailableException':
-                    print(f"WARNING: AWS Bedrock service unavailable. Using random vector fallback. Details: {error_message}")
-                else:
-                    print(f"WARNING: AWS embedding generation failed ({error_code}). Using random vector fallback. Details: {error_message}")
-            else:
-                print(f"WARNING: AWS embedding generation failed for text. Using random vector. Details: {e}")
-            
-            # Use random vector as fallback (Requirement 5.3)
+        except Exception as e:
+            # Ensure processing continues with other texts (Requirement 4.5)
+            print(f"WARNING: Unexpected error processing text {i+1}/{len(texts)}. "
+                  f"Continuing with remaining texts. Details: {e}")
             embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
             aws_fallback_count += 1
     
@@ -203,7 +366,11 @@ def generate_embeddings_with_titan(client, texts):
     if aws_success_count > 0 or aws_fallback_count > 0:
         total_processed = aws_success_count + aws_fallback_count
         success_rate = (aws_success_count / total_processed) * 100 if total_processed > 0 else 0
-        print(f"AWS Batch Stats: {aws_success_count}/{total_processed} successful ({success_rate:.1f}%), {aws_fallback_count} fallbacks")
+        print(f"AWS Batch Stats: {aws_success_count}/{total_processed} successful ({success_rate:.1f}%), "
+              f"{aws_fallback_count} fallbacks")
+        
+        if aws_fallback_count > 0:
+            print(f"INFO: Application continues functioning with {aws_fallback_count} fallback embeddings")
     
     return embeddings
 
@@ -219,30 +386,62 @@ try:
                 'bedrock-runtime',
                 region_name=AWS_REGION
             )
-            # Test connection by listing models (this will fail if credentials are invalid)
-            bedrock_client.list_foundation_models()
-            print(f"✅ AWS Bedrock client initialized successfully")
-            print(f"✅ AWS embedding model '{EMBEDDING_MODEL_NAME}' configured. Vector dimension: {VECTOR_DIM}")
-            print(f"✅ AWS credentials validated and connection established")
+            
+            # Test connection and validate permissions (Requirement 4.2)
+            try:
+                bedrock_client.list_foundation_models()
+                print(f"✅ AWS Bedrock client initialized successfully")
+                print(f"✅ AWS embedding model '{EMBEDDING_MODEL_NAME}' configured. Vector dimension: {VECTOR_DIM}")
+                print(f"✅ AWS credentials validated and connection established")
+            except ClientError as test_error:
+                test_error_code = test_error.response.get('Error', {}).get('Code', 'Unknown')
+                if test_error_code == 'AccessDeniedException':
+                    print(f"WARNING: AWS credentials lack Bedrock permissions. Details: {test_error}")
+                    print("Please ensure your AWS credentials have bedrock:ListFoundationModels and bedrock:InvokeModel permissions.")
+                    print("Continuing with fallback to random embeddings for AWS mode.")
+                    bedrock_client = None
+                else:
+                    # Re-raise for general handling below
+                    raise test_error
+                    
         except NoCredentialsError as e:
             print(f"WARNING: AWS credentials not found or invalid. Details: {e}")
             print("Please ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set, or use IAM roles.")
+            print("Alternatively, configure AWS CLI with 'aws configure' or use EC2 instance profiles.")
             print("Continuing with fallback to random embeddings for AWS mode.")
             bedrock_client = None
+            
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', str(e))
+            
             if error_code == 'UnauthorizedOperation':
-                print(f"WARNING: AWS credentials lack necessary permissions. Details: {e}")
+                print(f"WARNING: AWS credentials lack necessary permissions. Details: {error_message}")
                 print("Please ensure your AWS credentials have bedrock:* permissions.")
             elif error_code == 'InvalidRegion':
-                print(f"WARNING: Invalid AWS region '{AWS_REGION}'. Details: {e}")
+                print(f"WARNING: Invalid AWS region '{AWS_REGION}'. Details: {error_message}")
                 print("Please check that Bedrock is available in your specified region.")
+                print("Available regions for Bedrock: us-east-1, us-west-2, eu-west-1, ap-southeast-1, ap-northeast-1")
+            elif error_code == 'ServiceUnavailableException':
+                print(f"WARNING: AWS Bedrock service unavailable in region '{AWS_REGION}'. Details: {error_message}")
+                print("Service may be experiencing issues or not available in this region.")
+            elif error_code == 'ThrottlingException':
+                print(f"WARNING: AWS rate limiting during initialization. Details: {error_message}")
+                print("Too many requests during startup. Consider adding delays between operations.")
             else:
-                print(f"WARNING: AWS Bedrock client error ({error_code}). Details: {e}")
+                print(f"WARNING: AWS Bedrock client error ({error_code}). Details: {error_message}")
+            
             print("Continuing with fallback to random embeddings for AWS mode.")
             bedrock_client = None
+            
         except Exception as e:
-            print(f"WARNING: Unexpected error initializing AWS Bedrock client. Details: {e}")
+            # Handle network timeouts and other unexpected errors (Requirement 4.4)
+            if hasattr(e, '__class__') and 'timeout' in e.__class__.__name__.lower():
+                print(f"WARNING: Network timeout initializing AWS Bedrock client. Details: {e}")
+                print("Check network connectivity to AWS services.")
+            else:
+                print(f"WARNING: Unexpected error initializing AWS Bedrock client. Details: {e}")
+            
             print("Continuing with fallback to random embeddings for AWS mode.")
             bedrock_client = None
     elif AI_MODE == "GCP":
@@ -489,7 +688,9 @@ for index, persona in tqdm(df.iterrows(), total=df.shape[0], desc="Processing Pe
         else: # LOCAL mode
             embedding_vector = model.encode(texts_to_embed, convert_to_numpy=True)
     except Exception as e:
-        print(f"WARNING: Could not generate embedding for persona {user_id}. Using random vector. Details: {e}")
+        # Enhanced error handling for persona embedding generation (Requirement 4.5)
+        print(f"WARNING: Could not generate embedding for persona {user_id} ({persona.get('name', 'Unknown')}). "
+              f"Using random vector fallback. Processing will continue with remaining personas. Details: {e}")
         embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
 
     # Prepare data for Valkey Hash. The purchase_history is already a JSON string from the CSV.

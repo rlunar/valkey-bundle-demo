@@ -51,15 +51,55 @@ if os.getenv("AWS_REGION"):
             'bedrock-runtime',
             region_name=app.config['AWS_REGION']
         )
-        print("✅ AWS Bedrock client initialized.")
+        
+        # Test connection and validate permissions (Requirement 4.2)
+        try:
+            ai_client.list_foundation_models()
+            print("✅ AWS Bedrock client initialized and credentials validated.")
+        except ClientError as test_error:
+            test_error_code = test_error.response.get('Error', {}).get('Code', 'Unknown')
+            if test_error_code == 'AccessDeniedException':
+                print(f"WARNING: AWS credentials lack Bedrock permissions. AI features will be mocked. Details: {test_error}")
+                print("Please ensure your AWS credentials have bedrock:ListFoundationModels and bedrock:InvokeModel permissions.")
+                ai_client = None
+            else:
+                # Re-raise for general handling below
+                raise test_error
+                
     except NoCredentialsError as e:
         print(f"WARNING: AWS credentials not found. AI features will be mocked. Details: {e}")
+        print("Please ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set, or use IAM roles.")
+        print("Alternatively, configure AWS CLI with 'aws configure' or use EC2 instance profiles.")
         ai_client = None
+        
     except ClientError as e:
-        print(f"WARNING: AWS client error. AI features will be mocked. Details: {e}")
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = e.response.get('Error', {}).get('Message', str(e))
+        
+        if error_code == 'UnauthorizedOperation':
+            print(f"WARNING: AWS credentials lack necessary permissions. AI features will be mocked. Details: {error_message}")
+            print("Please ensure your AWS credentials have bedrock:* permissions.")
+        elif error_code == 'InvalidRegion':
+            print(f"WARNING: Invalid AWS region '{app.config['AWS_REGION']}'. AI features will be mocked. Details: {error_message}")
+            print("Please check that Bedrock is available in your specified region.")
+        elif error_code == 'ServiceUnavailableException':
+            print(f"WARNING: AWS Bedrock service unavailable. AI features will be mocked. Details: {error_message}")
+            print("Service may be experiencing issues or not available in this region.")
+        elif error_code == 'ThrottlingException':
+            print(f"WARNING: AWS rate limiting during initialization. AI features will be mocked. Details: {error_message}")
+        else:
+            print(f"WARNING: AWS Bedrock client error ({error_code}). AI features will be mocked. Details: {error_message}")
+        
         ai_client = None
+        
     except Exception as e:
-        print(f"WARNING: Could not initialize AWS Bedrock client. AI features will be mocked. Details: {e}")
+        # Handle network timeouts and other unexpected errors (Requirement 4.4)
+        if hasattr(e, '__class__') and 'timeout' in e.__class__.__name__.lower():
+            print(f"WARNING: Network timeout initializing AWS Bedrock client. AI features will be mocked. Details: {e}")
+            print("Check network connectivity to AWS services.")
+        else:
+            print(f"WARNING: Unexpected error initializing AWS Bedrock client. AI features will be mocked. Details: {e}")
+        
         ai_client = None
 
 elif app.config.get('GCP_PROJECT'):
@@ -198,68 +238,304 @@ def get_products_by_ids(ids):
     return prods
 
 
+# --- AWS Error Handling Classes and Utilities ---
+class AWSBedrockError(Exception):
+    """Base exception for AWS Bedrock related errors."""
+    pass
+
+class AWSCredentialsError(AWSBedrockError):
+    """Exception for AWS credential issues."""
+    pass
+
+class AWSRateLimitError(AWSBedrockError):
+    """Exception for AWS rate limiting."""
+    pass
+
+class AWSServiceUnavailableError(AWSBedrockError):
+    """Exception for AWS service unavailability."""
+    pass
+
+class AWSCircuitBreaker:
+    """
+    Simple circuit breaker to prevent cascading failures when AWS services are down.
+    """
+    def __init__(self, failure_threshold=5, recovery_timeout=60):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failure_count = 0
+        self.last_failure_time = None
+        self.state = 'CLOSED'  # CLOSED, OPEN, HALF_OPEN
+    
+    def call(self, func, *args, **kwargs):
+        """
+        Execute function with circuit breaker protection.
+        """
+        import time
+        
+        if self.state == 'OPEN':
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = 'HALF_OPEN'
+                print("INFO: AWS circuit breaker transitioning to HALF_OPEN state")
+            else:
+                raise AWSServiceUnavailableError("AWS circuit breaker is OPEN - service unavailable")
+        
+        try:
+            result = func(*args, **kwargs)
+            if self.state == 'HALF_OPEN':
+                self.state = 'CLOSED'
+                self.failure_count = 0
+                print("INFO: AWS circuit breaker reset to CLOSED state")
+            return result
+        except (AWSServiceUnavailableError, AWSCredentialsError) as e:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            
+            if self.failure_count >= self.failure_threshold:
+                self.state = 'OPEN'
+                print(f"WARNING: AWS circuit breaker opened after {self.failure_count} failures")
+            
+            raise e
+
+# Global circuit breaker instance
+aws_circuit_breaker = AWSCircuitBreaker()
+
+def handle_aws_error(error, context="", user_name=None, product_name=None):
+    """
+    Centralized AWS error handling with proper logging and fallback mechanisms.
+    
+    Args:
+        error: The exception that occurred
+        context: Context string for logging (e.g., "Nova Pro generation", "Titan embedding")
+        user_name: User name for fallback description generation
+        product_name: Product name for fallback description generation
+    
+    Returns:
+        Appropriate fallback response based on context
+    """
+    # Import AWS exceptions here to avoid import issues when AWS is not configured
+    try:
+        from botocore.exceptions import ClientError, NoCredentialsError, EndpointConnectionError
+    except ImportError:
+        print(f"WARNING: AWS libraries not available for error handling in {context}")
+        if user_name and product_name:
+            return get_aws_fallback_description(user_name, product_name)
+        return None
+    
+    # Handle AWS credential errors (Requirement 4.2)
+    if isinstance(error, NoCredentialsError):
+        print(f"WARNING: AWS credentials not found for {context}. "
+              f"Please ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set, or use IAM roles.")
+        raise AWSCredentialsError(f"AWS credentials not found: {error}")
+    
+    # Handle endpoint connection errors (network issues)
+    elif isinstance(error, EndpointConnectionError):
+        print(f"WARNING: Cannot connect to AWS endpoint for {context}. "
+              f"Check network connectivity and AWS region configuration. "
+              f"Details: Connection failed")  # Don't expose full endpoint details
+        raise AWSServiceUnavailableError(f"AWS endpoint connection failed")
+    
+    # Handle AWS client errors with specific error codes (Requirements 4.1, 4.3)
+    elif isinstance(error, ClientError):
+        error_code = error.response.get('Error', {}).get('Code', 'Unknown')
+        # Sanitize error message to avoid exposing sensitive information (Requirement 4.5)
+        error_message = error.response.get('Error', {}).get('Message', 'AWS service error')
+        
+        # Remove any potential sensitive information from error messages
+        sanitized_message = _sanitize_error_message(error_message)
+        
+        if error_code == 'ThrottlingException':
+            print(f"WARNING: AWS rate limiting encountered for {context}. "
+                  f"Request will be retried with exponential backoff. Details: {sanitized_message}")
+            raise AWSRateLimitError(f"AWS rate limiting: {sanitized_message}")
+        
+        elif error_code == 'ValidationException':
+            print(f"WARNING: AWS validation error for {context}. "
+                  f"Check request parameters. Details: {sanitized_message}")
+            
+        elif error_code == 'AccessDeniedException':
+            print(f"WARNING: AWS access denied for {context}. "
+                  f"Check IAM permissions for Bedrock services. Details: {sanitized_message}")
+            raise AWSCredentialsError(f"AWS access denied: {sanitized_message}")
+        
+        elif error_code == 'ServiceUnavailableException':
+            print(f"WARNING: AWS Bedrock service unavailable for {context}. "
+                  f"Service may be experiencing issues. Details: {sanitized_message}")
+            raise AWSServiceUnavailableError(f"AWS service unavailable: {sanitized_message}")
+        
+        elif error_code == 'ModelNotReadyException':
+            print(f"WARNING: AWS model not ready for {context}. "
+                  f"Model may be loading or unavailable in this region. Details: {sanitized_message}")
+            raise AWSServiceUnavailableError(f"AWS model not ready: {sanitized_message}")
+        
+        elif error_code == 'InternalServerException':
+            print(f"WARNING: AWS internal server error for {context}. "
+                  f"Temporary service issue. Details: {sanitized_message}")
+            raise AWSServiceUnavailableError(f"AWS internal error: {sanitized_message}")
+        
+        elif error_code == 'ResourceNotFoundException':
+            print(f"WARNING: AWS resource not found for {context}. "
+                  f"Model or resource may not exist in this region. Details: {sanitized_message}")
+            raise AWSServiceUnavailableError(f"AWS resource not found: {sanitized_message}")
+        
+        elif error_code == 'ModelTimeoutException':
+            print(f"WARNING: AWS model timeout for {context}. "
+                  f"Model processing took too long. Details: {sanitized_message}")
+            raise AWSServiceUnavailableError(f"AWS model timeout: {sanitized_message}")
+        
+        else:
+            print(f"WARNING: AWS client error for {context}. "
+                  f"Error code: {error_code}. Details: {sanitized_message}")
+    
+    # Handle JSON parsing errors
+    elif isinstance(error, json.JSONDecodeError):
+        print(f"WARNING: Failed to parse AWS response JSON for {context}. "
+              f"Response may be malformed. Details: Invalid JSON response")
+    
+    # Handle network and timeout errors
+    elif hasattr(error, '__class__') and 'timeout' in error.__class__.__name__.lower():
+        print(f"WARNING: Network timeout for {context}. "
+              f"Check network connectivity to AWS services. Details: Request timeout")
+        raise AWSServiceUnavailableError(f"Network timeout")
+    
+    # Handle general exceptions
+    else:
+        print(f"WARNING: Unexpected error for {context}. Details: {type(error).__name__}")
+    
+    # Return appropriate fallback based on context
+    if user_name and product_name:
+        return get_aws_fallback_description(user_name, product_name)
+    elif context == "embedding":
+        return np.random.rand(app.config.get('VECTOR_DIM', 1024)).astype(np.float32).tolist()
+    else:
+        return None
+
+def _sanitize_error_message(message):
+    """
+    Sanitize error messages to remove potentially sensitive information.
+    
+    Args:
+        message: Original error message
+    
+    Returns:
+        Sanitized error message without sensitive information
+    """
+    if not message:
+        return "AWS service error"
+    
+    # Remove potential access keys, tokens, or other sensitive patterns
+    import re
+    
+    # Remove AWS access key patterns
+    message = re.sub(r'AKIA[0-9A-Z]{16}', '[ACCESS_KEY_REDACTED]', message)
+    
+    # Remove potential secret key patterns
+    message = re.sub(r'[A-Za-z0-9/+=]{40}', '[SECRET_REDACTED]', message)
+    
+    # Remove session token patterns
+    message = re.sub(r'[A-Za-z0-9/+=]{100,}', '[TOKEN_REDACTED]', message)
+    
+    # Remove IP addresses
+    message = re.sub(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', '[IP_REDACTED]', message)
+    
+    # Remove potential ARNs with account numbers
+    message = re.sub(r'arn:aws:[^:]*:[^:]*:\d{12}:[^:]*', '[ARN_REDACTED]', message)
+    
+    return message
+
+def retry_with_exponential_backoff(func, max_retries=3, base_delay=1.0):
+    """
+    Retry function with exponential backoff for handling rate limiting.
+    
+    Args:
+        func: Function to retry
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds
+    
+    Returns:
+        Function result or raises exception after max retries
+    """
+    import time
+    import random
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except AWSRateLimitError as e:
+            if attempt == max_retries:
+                print(f"WARNING: Max retries ({max_retries}) exceeded for AWS rate limiting.")
+                raise e
+            
+            # Add jitter to prevent thundering herd problem
+            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+            print(f"INFO: Retrying AWS request in {delay:.1f} seconds (attempt {attempt + 1}/{max_retries + 1})")
+            time.sleep(delay)
+        except (AWSCredentialsError, AWSServiceUnavailableError):
+            # Don't retry for credential or service unavailability errors
+            raise
+        except Exception as e:
+            # Log unexpected errors but don't retry
+            print(f"WARNING: Unexpected error in retry mechanism: {type(e).__name__}")
+            raise
+
 # --- AWS Bedrock Text Generation ---
 def generate_with_nova_pro(client, prompt, user_name, product_name):
     """
-    Generate personalized description using Amazon Nova Pro with proper error handling.
+    Generate personalized description using Amazon Nova Pro with comprehensive error handling.
     """
     if not client:
         print("WARNING: AWS Bedrock client not available, using fallback response.")
         return get_aws_fallback_description(user_name, product_name)
     
+    def _generate():
+        try:
+            response = client.invoke_model(
+                modelId=app.config['LLM_MODEL_NAME'],
+                body=json.dumps({
+                    "inputText": prompt,
+                    "textGenerationConfig": {
+                        "maxTokenCount": 200,
+                        "temperature": 0.7,
+                        "topP": 0.9
+                    }
+                })
+            )
+            
+            response_body = json.loads(response['body'].read())
+            
+            # Validate response structure
+            if not response_body.get('results') or not response_body['results']:
+                raise ValueError("Empty results in Nova Pro response")
+            
+            output_text = response_body['results'][0].get('outputText')
+            if not output_text or not output_text.strip():
+                raise ValueError("Empty output text in Nova Pro response")
+            
+            return output_text.strip()
+            
+        except (NoCredentialsError, ClientError, json.JSONDecodeError) as e:
+            return handle_aws_error(e, "Nova Pro generation", user_name, product_name)
+        except Exception as e:
+            return handle_aws_error(e, "Nova Pro generation", user_name, product_name)
+    
     try:
-        response = client.invoke_model(
-            modelId=app.config['LLM_MODEL_NAME'],
-            body=json.dumps({
-                "inputText": prompt,
-                "textGenerationConfig": {
-                    "maxTokenCount": 200,
-                    "temperature": 0.7,
-                    "topP": 0.9
-                }
-            })
-        )
+        # Use circuit breaker to prevent cascading failures
+        def _generate_with_circuit_breaker():
+            return aws_circuit_breaker.call(_generate)
         
-        response_body = json.loads(response['body'].read())
-        
-        # Validate response structure
-        if not response_body.get('results') or not response_body['results']:
-            raise ValueError("Empty results in Nova Pro response")
-        
-        output_text = response_body['results'][0].get('outputText')
-        if not output_text or not output_text.strip():
-            raise ValueError("Empty output text in Nova Pro response")
-        
-        return output_text.strip()
-        
-    except NoCredentialsError as e:
-        print(f"WARNING: AWS credentials not found for Nova Pro generation. Details: {e}")
+        # Use retry mechanism for rate limiting (Requirement 4.3)
+        return retry_with_exponential_backoff(_generate_with_circuit_breaker)
+    except (AWSCredentialsError, AWSServiceUnavailableError, AWSRateLimitError):
+        # All retry attempts failed, use fallback (Requirement 4.4)
+        print(f"WARNING: All retry attempts failed for Nova Pro generation. Using fallback response.")
         return get_aws_fallback_description(user_name, product_name)
-    
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-        if error_code == 'ThrottlingException':
-            print(f"WARNING: AWS rate limiting encountered for Nova Pro. Details: {e}")
-        elif error_code == 'ValidationException':
-            print(f"WARNING: AWS validation error for Nova Pro request. Details: {e}")
-        elif error_code == 'ModelNotReadyException':
-            print(f"WARNING: Nova Pro model not ready. Details: {e}")
-        else:
-            print(f"WARNING: AWS client error during Nova Pro generation. Code: {error_code}, Details: {e}")
-        return get_aws_fallback_description(user_name, product_name)
-    
-    except json.JSONDecodeError as e:
-        print(f"WARNING: Failed to parse Nova Pro response JSON. Details: {e}")
-        return get_aws_fallback_description(user_name, product_name)
-    
     except Exception as e:
-        print(f"WARNING: Unexpected error during Nova Pro generation. Details: {e}")
+        print(f"WARNING: Unexpected error in Nova Pro retry mechanism. Using fallback response. Details: {type(e).__name__}")
         return get_aws_fallback_description(user_name, product_name)
-
 
 def get_aws_fallback_description(user_name, product_name):
     """
     Generate fallback description when AWS Bedrock is unavailable.
+    Ensures application continues functioning (Requirement 4.4).
     """
     return (
         f"For an individual like {user_name}, the {product_name} "
@@ -313,7 +589,10 @@ def get_personalized_descriptions_async(user_profile, products):
                 print(f"INFO: [{app.config['AI_MODE']} Success] for {cache_key}")
 
             except Exception as e:
-                print(f"WARNING: [{app.config['AI_MODE']} API Call Failed] using mock response. Details: {e}")
+                # Enhanced error handling to continue processing other products (Requirement 4.5)
+                print(f"WARNING: [{app.config['AI_MODE']} API Call Failed] for product {product['name']}. "
+                      f"Continuing with other products. Details: {e}")
+                
                 if app.config['AI_MODE'] == "AWS":
                     desc = get_aws_fallback_description(user_profile['name'], product['name'])
                 else:
@@ -321,6 +600,9 @@ def get_personalized_descriptions_async(user_profile, products):
                         f"For an individual like {user_profile['name']}, the {product['name']} "
                         f"is a standout choice, aligning perfectly with your unique interests and needs."
                     )
+                
+                # Log that we're continuing with the next product
+                print(f"INFO: Using fallback description for {product['name']}, continuing with batch processing.")
             valkey_client.set(cache_key, desc, ex=7200)
         ## --- DELTA END ---
 
