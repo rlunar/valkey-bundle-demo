@@ -47,11 +47,23 @@ header {
     border-bottom: 1px solid #dfe1e6;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
+
+.logo {
+    display: flex;
+}
+
+.logo img {
+    width: 40px;
+}
+
 .logo a {
+    margin-left: 10px;
+    margin-top: 20px;
     font-size: 1.5em;
     font-weight: bold;
     color: #091e42;
     text-decoration: none;
+    vertical-align: top;
 }
 
 .header-right {
