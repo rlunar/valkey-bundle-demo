@@ -20,7 +20,7 @@ main {
 }
 
 h1, h2, h3 {
-    color: #091e42;
+    color: #1A2026;
 }
 
 hr {
@@ -61,7 +61,7 @@ header {
     margin-top: 20px;
     font-size: 1.5em;
     font-weight: bold;
-    color: #091e42;
+    color: #1A2026;
     text-decoration: none;
     vertical-align: top;
 }
@@ -85,8 +85,8 @@ header {
 }
 .search-form button {
     padding: 8px 15px;
-    border: 1px solid #0052cc;
-    background-color: #0052cc;
+    border: 1px solid #6983FF;
+    background-color: #6983FF;
     color: white;
     border-radius: 0 4px 4px 0;
     cursor: pointer;
@@ -178,7 +178,7 @@ header {
 .product-price {
     font-size: 18px;
     font-weight: bold;
-    color: #091e42;
+    color: #1A2026;
     margin: 0;
 }
 
@@ -260,7 +260,7 @@ header {
 .login-container button {
     width: 100%;
     padding: 12px;
-    background-color: #0052cc;
+    background-color: #6983FF;
     color: white;
     border: none;
     border-radius: 4px;

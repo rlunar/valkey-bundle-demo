@@ -8,7 +8,7 @@
         <div class="product-main-info">
             <p class="product-brand">{{ product.brand }}</p>
             <h1>{{ product.name }}</h1>
-            <p class="product-price">₹ {{ "%.2f"|format(product.price|float) }}</p>
+            <p class="product-price">$ {{ "%.2f"|format(product.price|float) }}</p>
             
             <div id="personalized-pitch-container" class="personalized-pitch loading">
                 <h3>A Great Choice For You!</h3>
