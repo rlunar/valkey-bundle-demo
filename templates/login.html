@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Login - Valkey Demo</title>
+    <title>Login - Valkey-Bundle Demo</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="login-body">
     <div class="login-container">
-        <h2>Valkey Vector Search Demo</h2>
+        <img src="{{ url_for('static', filename='valkey-horizontal-color.svg')}}" alt="Valkey Logo" />
+        <h2>Valkey-Bundle Demo</h2>
         <p>Login to continue</p>
         {% if error %}
             <p class="error">{{ error }}</p>

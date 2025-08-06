@@ -13,7 +13,7 @@ This project demonstrates a modern, AI-powered e-commerce search experience usin
 - **AI Models**:
   - Local: Ollama (tinyllama) + sentence-transformers
   - Google Cloud: Gemini + Vertex AI embeddings
-  - AWS: Bedrock Nova Pro + Titan Text Embeddings v2
+  - AWS Bedrock: Nova Pro + Titan Text Embeddings v2
 - **Frontend**: HTML templates with Server-Sent Events (SSE)
 
 ### Key Features
@@ -125,6 +125,31 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
 
 ## AI Integration
 
+### Error Handling and Resilience
+
+The application implements comprehensive error handling for all AI backends:
+
+#### AWS Bedrock Error Handling
+- **Credential Validation**: Automatic detection and validation of AWS credentials
+- **Rate Limiting**: Exponential backoff retry mechanism for throttling
+- **Circuit Breaker**: Prevents cascading failures when AWS services are unavailable
+- **Graceful Fallbacks**: Application continues functioning with mock responses when AWS is unavailable
+- **Security**: Error message sanitization to prevent sensitive information exposure
+
+#### Error Recovery Patterns
+```python
+# Circuit breaker pattern for AWS service protection
+aws_circuit_breaker = AWSCircuitBreaker(failure_threshold=5, recovery_timeout=60)
+
+# Retry with exponential backoff for rate limiting
+def retry_with_exponential_backoff(func, max_retries=3, base_delay=1.0):
+    # Implementation handles ThrottlingException with progressive delays
+
+# Comprehensive error handling for different AWS error types
+def handle_aws_error(error, context, user_name=None, product_name=None):
+    # Handles NoCredentialsError, ClientError, network timeouts, etc.
+```
+
 ### Local Mode (Default)
 
 - **LLM**: Ollama with tinyllama (1.1B parameters)
@@ -139,16 +164,22 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
 
 ### AWS Bedrock Mode (Optional)
 
-- **LLM**: Amazon Nova Pro
-- **Embeddings**: Titan Text Embeddings v2 (1024 dims)
-- **Advantages**: AWS ecosystem integration, high performance
+- **LLM**: Amazon Nova Pro (amazon.nova-pro-v1:0)
+- **Embeddings**: Titan Text Embeddings v2 (amazon.titan-embed-text-v2:0, 1024 dims)
+- **Advantages**: AWS ecosystem integration, high performance, enterprise-grade AI
+- **Requirements**: AWS CLI, proper IAM permissions, supported regions
+- **Error Handling**: Comprehensive retry logic, circuit breaker pattern, graceful fallbacks
 
 ### Configuration
 
 ```python
-# Automatic detection based on environment variables
+# Automatic detection based on environment variables (priority order: AWS > GCP > LOCAL)
 if os.getenv("AWS_REGION"):
     AI_MODE = "AWS"
+    AWS_REGION = os.getenv("AWS_REGION")
+    LLM_MODEL_NAME = "amazon.nova-pro-v1:0"
+    EMBEDDING_MODEL_NAME = "amazon.titan-embed-text-v2:0"
+    VECTOR_DIM = 1024
 elif os.getenv("GCP_PROJECT"):
     AI_MODE = "GCP"
 else:
@@ -234,20 +265,58 @@ python3 load_data.py --project your-project-id
 
 For detailed AWS Bedrock setup instructions, see [AWS Bedrock Setup Guide](aws-bedrock-setup.md).
 
-Quick setup:
+#### Quick Setup:
 ```bash
-# Set environment variables
+# Install AWS CLI (if not already installed)
+brew install awscli  # macOS
+# or follow AWS CLI installation guide for other platforms
+
+# Configure AWS credentials (choose one method)
+aws configure  # Interactive setup
+# OR set environment variables:
 export AWS_REGION="us-east-1"
-# Optional if using IAM roles:
 export AWS_ACCESS_KEY_ID="your-access-key"
 export AWS_SECRET_ACCESS_KEY="your-secret-key"
 
-# Verify AWS configuration
+# Verify AWS configuration and Bedrock access
+aws sts get-caller-identity
 aws bedrock list-foundation-models --region us-east-1
+aws bedrock get-foundation-model --model-identifier amazon.nova-pro-v1:0 --region us-east-1
 
 # Load data with AWS embeddings
 python3 load_data.py --aws-region us-east-1
+
+# Run application
+flask run --host=0.0.0.0 --port=5001
 ```
+
+#### Required IAM Permissions:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:ListFoundationModels",
+                "bedrock:GetFoundationModel"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0",
+                "arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0"
+            ]
+        }
+    ]
+}
+```
+
+#### Supported AWS Regions:
+- `us-east-1` (N. Virginia) - **Recommended**
+- `us-west-2` (Oregon)
+- `eu-west-1` (Ireland)
+
+**Note:** Model availability may vary by region. Check the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html) for current information.
 
 ## Development
 
@@ -331,20 +400,53 @@ python3 load_data.py --flush
    aws sts get-caller-identity
    # Verify Bedrock access
    aws bedrock list-foundation-models --region us-east-1
+   # Test specific model access
+   aws bedrock get-foundation-model --model-identifier amazon.nova-pro-v1:0 --region us-east-1
    # Check IAM permissions for bedrock:InvokeModel
    ```
 
-4. **Memory Issues**
+5. **AWS Rate Limiting Issues**
+   - Application includes automatic retry with exponential backoff
+   - Monitor usage in AWS CloudWatch
+   - Consider requesting quota increases for high-volume usage
+
+6. **AWS Circuit Breaker Activation**
+   - Application uses circuit breaker pattern to prevent cascading failures
+   - Check logs for "AWS circuit breaker" messages
+   - Service will automatically recover when AWS becomes available
+
+7. **AWS Credential Issues**
+   - Ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set
+   - Or use `aws configure` for credential setup
+   - For EC2 instances, use IAM roles instead of access keys
+   - Check credential expiration for temporary credentials
+
+8. **Memory Issues**
    - Reduce batch size in `load_data.py`
    - Monitor Valkey memory usage
    - Consider using smaller embedding models
+
+9. **AWS Network Connectivity Issues**
+   - Check network connectivity to AWS Bedrock endpoints
+   - Verify security groups and NACLs allow HTTPS traffic
+   - Test with different AWS regions if connectivity issues persist
+
+10. **AWS Model Availability Issues**
+    - Verify Nova Pro is available in your selected region
+    - Check AWS service status at https://status.aws.amazon.com/
+    - Some models may have regional availability restrictions
 
 ### Performance Tuning
 
 - **Search Results**: Adjust KNN parameter (default: 25)
 - **MMR Parameters**: Tune lambda_param for relevance vs diversity
-- **Cache TTL**: Modify based on content freshness requirements
+- **Cache TTL**: Modify based on content freshness requirements (default: 2 hours)
 - **Index Parameters**: Optimize HNSW configuration for your dataset
+- **AWS Bedrock Optimization**:
+  - Use batch processing for embedding generation
+  - Implement request caching to reduce API calls
+  - Monitor CloudWatch metrics for optimization opportunities
+  - Consider regional proximity for lower latency
 
 ## Contributing
 
