@@ -62,7 +62,7 @@
   - Ensure persona embeddings use the correct 1024-dimensional vectors for AWS
   - _Requirements: 5.2, 5.3_
 
-- [ ] 10. Create unit tests for AWS Bedrock integration
+- [x] 10. Create unit tests for AWS Bedrock integration
 
   - Write tests for AWS configuration detection and client initialization
   - Create tests for Nova Pro text generation with mock responses
