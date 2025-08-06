@@ -27,6 +27,8 @@ parser.add_argument('--cluster', action='store_true', help="Enable cluster mode 
 # GCP Project is now optional. If not provided, the script will use the local fallback.
 parser.add_argument('--project', type=str, default=os.getenv("GCP_PROJECT"), help="[Optional] Your Google Cloud Project ID. If not set, a local model will be used.")
 parser.add_argument('--location', type=str, default="us-central1", help="The GCP region for your Vertex AI job.")
+# AWS Region for explicit AWS mode selection
+parser.add_argument('--aws-region', type=str, default=os.getenv("AWS_REGION"), help="[Optional] AWS region for Bedrock. If set, AWS Bedrock will be used for embeddings.")
 parser.add_argument('--flush', action='store_true', help="Flush all data from the Valkey server before loading new data.")
 args = parser.parse_args()
 
@@ -46,22 +48,58 @@ STOP_WORDS = set(["a", "about", "all", "an", "and", "any", "are", "as", "at", "b
 # --- Dynamic AI Configuration ---
 AI_MODE = None
 MODEL_NAME = None
+EMBEDDING_MODEL_NAME = None
 VECTOR_DIM = None
-model = None # This will hold either the GCP or local model client
+model = None # This will hold either the AWS, GCP or local model client
+bedrock_client = None # AWS Bedrock client
 
-if args.project:
-    import vertexai
-    from vertexai.language_models import TextEmbeddingModel
-    AI_MODE = "GCP"
-    GCP_PROJECT = args.project
-    GCP_LOCATION = args.location
-    MODEL_NAME = "text-embedding-004"
-    VECTOR_DIM = 768 # text-embedding-004 model has 768 dimensions
+# Priority order: AWS > GCP > LOCAL
+# Check for AWS configuration first (either via --aws-region argument or AWS_REGION environment variable)
+if args.aws_region or os.getenv("AWS_REGION"):
+    try:
+        import boto3
+        from botocore.exceptions import ClientError, NoCredentialsError
+        AI_MODE = "AWS"
+        AWS_REGION = args.aws_region or os.getenv("AWS_REGION")
+        EMBEDDING_MODEL_NAME = "amazon.titan-embed-text-v2:0"
+        VECTOR_DIM = 1024 # Titan Text Embeddings v2 has 1024 dimensions
+        print(f"AWS Bedrock configuration detected. Region: {AWS_REGION}")
+        print(f"AWS embedding model: {EMBEDDING_MODEL_NAME}, Vector dimension: {VECTOR_DIM}")
+        if args.aws_region:
+            print(f"AWS region explicitly set via --aws-region argument: {args.aws_region}")
+        else:
+            print(f"AWS region detected from AWS_REGION environment variable: {os.getenv('AWS_REGION')}")
+    except ImportError as e:
+        print(f"ERROR: boto3 library not found. Please install boto3 to use AWS Bedrock. Details: {e}")
+        print("Falling back to LOCAL mode.")
+        from sentence_transformers import SentenceTransformer
+        AI_MODE = "LOCAL"
+        MODEL_NAME = "all-MiniLM-L6-v2"
+        VECTOR_DIM = 384 # all-MiniLM-L6-v2 model has 384 dimensions
+elif args.project:
+    try:
+        import vertexai
+        from vertexai.language_models import TextEmbeddingModel
+        AI_MODE = "GCP"
+        GCP_PROJECT = args.project
+        GCP_LOCATION = args.location
+        MODEL_NAME = "text-embedding-004"
+        VECTOR_DIM = 768 # text-embedding-004 model has 768 dimensions
+        print(f"GCP Vertex AI configuration detected. Project: {GCP_PROJECT}, Location: {GCP_LOCATION}")
+        print(f"GCP embedding model: {MODEL_NAME}, Vector dimension: {VECTOR_DIM}")
+    except ImportError as e:
+        print(f"ERROR: vertexai library not found. Please install google-cloud-aiplatform to use GCP. Details: {e}")
+        print("Falling back to LOCAL mode.")
+        from sentence_transformers import SentenceTransformer
+        AI_MODE = "LOCAL"
+        MODEL_NAME = "all-MiniLM-L6-v2"
+        VECTOR_DIM = 384 # all-MiniLM-L6-v2 model has 384 dimensions
 else:
     from sentence_transformers import SentenceTransformer
     AI_MODE = "LOCAL"
     MODEL_NAME = "all-MiniLM-L6-v2"
     VECTOR_DIM = 384 # all-MiniLM-L6-v2 model has 384 dimensions
+    print(f"LOCAL mode configuration detected. Model: {MODEL_NAME}, Vector dimension: {VECTOR_DIM}")
 
 # --- Helper Functions (no changes) ---
 def generate_tags(text: str, separator: str = ',') -> str:
@@ -107,14 +145,50 @@ def generate_avatar_data_uri(user_id: str) -> str:
 # --- 1. Initialize Clients ---
 try:
     print(f"\n--- AI Mode Detected: {AI_MODE} ---")
-    if AI_MODE == "GCP":
+    if AI_MODE == "AWS":
+        print(f"--- Initializing AWS Bedrock client for region '{AWS_REGION}'...")
+        print(f"--- Using embedding model: {EMBEDDING_MODEL_NAME}")
+        try:
+            # Initialize boto3 Bedrock client during startup (Requirement 3.2)
+            bedrock_client = boto3.client(
+                'bedrock-runtime',
+                region_name=AWS_REGION
+            )
+            # Test connection by listing models (this will fail if credentials are invalid)
+            bedrock_client.list_foundation_models()
+            print(f"✅ AWS Bedrock client initialized successfully")
+            print(f"✅ AWS embedding model '{EMBEDDING_MODEL_NAME}' configured. Vector dimension: {VECTOR_DIM}")
+            print(f"✅ AWS credentials validated and connection established")
+        except NoCredentialsError as e:
+            print(f"WARNING: AWS credentials not found or invalid. Details: {e}")
+            print("Please ensure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set, or use IAM roles.")
+            print("Continuing with fallback to random embeddings for AWS mode.")
+            bedrock_client = None
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            if error_code == 'UnauthorizedOperation':
+                print(f"WARNING: AWS credentials lack necessary permissions. Details: {e}")
+                print("Please ensure your AWS credentials have bedrock:* permissions.")
+            elif error_code == 'InvalidRegion':
+                print(f"WARNING: Invalid AWS region '{AWS_REGION}'. Details: {e}")
+                print("Please check that Bedrock is available in your specified region.")
+            else:
+                print(f"WARNING: AWS Bedrock client error ({error_code}). Details: {e}")
+            print("Continuing with fallback to random embeddings for AWS mode.")
+            bedrock_client = None
+        except Exception as e:
+            print(f"WARNING: Unexpected error initializing AWS Bedrock client. Details: {e}")
+            print("Continuing with fallback to random embeddings for AWS mode.")
+            bedrock_client = None
+    elif AI_MODE == "GCP":
         print(f"--- Initializing Vertex AI for project '{GCP_PROJECT}' in '{GCP_LOCATION}'...")
         vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
         model = TextEmbeddingModel.from_pretrained(MODEL_NAME)
+        print(f"✅ GCP model '{MODEL_NAME}' configured. Vector dimension: {VECTOR_DIM}")
     elif AI_MODE == "LOCAL":
         print(f"--- Initializing local embedding model '{MODEL_NAME}'...")
         model = SentenceTransformer(MODEL_NAME)
-    print(f"✅ AI model '{MODEL_NAME}' loaded. Vector dimension: {VECTOR_DIM}")
+        print(f"✅ Local model '{MODEL_NAME}' configured. Vector dimension: {VECTOR_DIM}")
 
     if IS_CLUSTER:
         mode_message = "Cluster"
@@ -141,7 +215,9 @@ try:
 
 except Exception as e:
     print(f"Error during initialization: {e}")
-    if AI_MODE == "GCP":
+    if AI_MODE == "AWS":
+        print("Please check your AWS credentials, region, and Valkey connection details.")
+    elif AI_MODE == "GCP":
         print("Please check your GCP project, authentication, and Valkey connection details.")
     else:
         print("Please check your Valkey connection details and ensure AI libraries are installed.")
@@ -223,7 +299,50 @@ for i in tqdm(range(0, len(df), BATCH_SIZE), desc="Processing Batches"):
         text = f"Product: {row.get('name', '')}. Brand: {extract_brand(row.get('name', ''))}. Category: {row.get('main_category', '')}, {row.get('sub_category', '')}."
         texts_to_embed.append(text)
 
-    if AI_MODE == "GCP":
+    if AI_MODE == "AWS":
+        embedding_vectors = []
+        aws_success_count = 0
+        aws_fallback_count = 0
+        
+        for text in texts_to_embed:
+            try:
+                if bedrock_client:
+                    response = bedrock_client.invoke_model(
+                        modelId=EMBEDDING_MODEL_NAME,
+                        body=json.dumps({
+                            "inputText": text,
+                            "dimensions": 1024,
+                            "normalize": True
+                        })
+                    )
+                    response_body = json.loads(response['body'].read())
+                    embedding_vectors.append(response_body['embedding'])
+                    aws_success_count += 1
+                else:
+                    # Fallback to random vector if client is not available
+                    embedding_vectors.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
+                    aws_fallback_count += 1
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                if error_code == 'ThrottlingException':
+                    print(f"WARNING: AWS rate limiting encountered. Using random vector fallback.")
+                elif error_code == 'ValidationException':
+                    print(f"WARNING: AWS validation error for embedding request. Using random vector fallback.")
+                else:
+                    print(f"WARNING: AWS embedding generation failed ({error_code}). Using random vector fallback.")
+                embedding_vectors.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
+                aws_fallback_count += 1
+            except Exception as e:
+                print(f"WARNING: AWS embedding generation failed for text. Using random vector. Details: {e}")
+                embedding_vectors.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
+                aws_fallback_count += 1
+        
+        # Display progress and success/failure statistics (Requirement 5.5)
+        if aws_success_count > 0 or aws_fallback_count > 0:
+            total_processed = aws_success_count + aws_fallback_count
+            success_rate = (aws_success_count / total_processed) * 100 if total_processed > 0 else 0
+            print(f"AWS Batch Stats: {aws_success_count}/{total_processed} successful ({success_rate:.1f}%), {aws_fallback_count} fallbacks")
+    elif AI_MODE == "GCP":
         response = model.get_embeddings(texts_to_embed)
         embedding_vectors = [item.values for item in response]
     else: # LOCAL mode
@@ -318,14 +437,34 @@ for index, persona in tqdm(df.iterrows(), total=df.shape[0], desc="Processing Pe
     texts_to_embed.append( f"User Persona: {persona['bio']} User Interests: {persona['interests_for_embedding']}")
 
     try:
-        if AI_MODE == "GCP":
+        if AI_MODE == "AWS":
+            if bedrock_client:
+                response = bedrock_client.invoke_model(
+                    modelId=EMBEDDING_MODEL_NAME,
+                    body=json.dumps({
+                        "inputText": texts_to_embed[0],
+                        "dimensions": 1024,
+                        "normalize": True
+                    })
+                )
+                response_body = json.loads(response['body'].read())
+                embedding_vector = response_body['embedding']
+            else:
+                # Fallback to random vector if client is not available
+                print(f"WARNING: AWS Bedrock client not available for persona {user_id}. Using random vector.")
+                embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
+        elif AI_MODE == "GCP":
             response = model.get_embeddings(texts_to_embed)
             embedding_vector = [item.values for item in response][0]
         else: # LOCAL mode
             embedding_vector = model.encode(texts_to_embed, convert_to_numpy=True)
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        print(f"WARNING: AWS embedding generation failed for persona {user_id} ({error_code}). Using random vector.")
+        embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
     except Exception as e:
-        print(f"WARNING: Could not generate embedding for {user_id}. Using random vector. Details: {e}")
-        embedding_vector = np.random.rand(768).astype(np.float32)
+        print(f"WARNING: Could not generate embedding for persona {user_id}. Using random vector. Details: {e}")
+        embedding_vector = np.random.rand(VECTOR_DIM).astype(np.float32)
 
     # Prepare data for Valkey Hash. The purchase_history is already a JSON string from the CSV.
     persona_data = {

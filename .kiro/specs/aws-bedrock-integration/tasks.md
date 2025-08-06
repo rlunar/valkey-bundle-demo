@@ -27,7 +27,7 @@
   - Test cache key generation and retrieval for AWS mode
   - _Requirements: 2.3, 2.5_
 
-- [ ] 5. Implement AWS Bedrock configuration detection in load_data.py
+- [x] 5. Implement AWS Bedrock configuration detection in load_data.py
 
   - Extend AI backend detection logic to support AWS_REGION environment variable
   - Add AWS-specific configuration (model names, vector dimensions, client initialization)
