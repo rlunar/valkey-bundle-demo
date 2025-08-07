@@ -16,6 +16,7 @@ import numpy as np
 import valkey
 from valkey.cluster import ValkeyCluster, ClusterNode
 
+
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(
     description="Load product data and generate embeddings, using Vertex AI if configured, otherwise falling back to a local model.",
@@ -32,6 +33,7 @@ parser.add_argument('--aws-region', type=str, default=os.getenv("AWS_REGION"), h
 parser.add_argument('--flush', action='store_true', help="Flush all data from the Valkey server before loading new data.")
 args = parser.parse_args()
 
+
 # --- Configuration ---
 VALKEY_HOST = args.host
 VALKEY_PORT = args.port
@@ -45,6 +47,7 @@ DISTANCE_METRIC = "COSINE"
 REGIONS = ["NA", "EU", "ASIA", "LATAM"]
 STOP_WORDS = set(["a", "about", "all", "an", "and", "any", "are", "as", "at", "be", "but", "by", "for", "from", "how", "i", "in", "is", "it", "of", "on", "or", "s", "t", "that", "the", "this", "to", "was", "what", "when", "where", "who", "will", "with", "storage", "ram", "gb", "mah", "mm", "hz", "with", "cm"])
 
+
 # --- Dynamic AI Configuration ---
 AI_MODE = None
 MODEL_NAME = None
@@ -52,6 +55,7 @@ EMBEDDING_MODEL_NAME = None
 VECTOR_DIM = None
 model = None # This will hold either the AWS, GCP or local model client
 bedrock_client = None # AWS Bedrock client
+
 
 # Priority order: AWS > GCP > LOCAL
 # Check for AWS configuration first (either via --aws-region argument or AWS_REGION environment variable)
@@ -101,6 +105,7 @@ else:
     VECTOR_DIM = 384 # all-MiniLM-L6-v2 model has 384 dimensions
     print(f"LOCAL mode configuration detected. Model: {MODEL_NAME}, Vector dimension: {VECTOR_DIM}")
 
+
 # --- Helper Functions (no changes) ---
 def generate_tags(text: str, separator: str = ',') -> str:
     if not isinstance(text, str): return ""
@@ -111,9 +116,11 @@ def generate_tags(text: str, separator: str = ',') -> str:
     unique_words = {word for word in words if word and word not in STOP_WORDS and not word.isdigit()}
     return separator.join(sorted(list(unique_words)))
 
+
 def extract_brand(name: str) -> str:
     if not isinstance(name, str): return "Unknown"
     return name.split(' ')[0]
+
 
 def clean_numeric(val, to_type=float):
     if not isinstance(val, str): val = str(val)
@@ -121,6 +128,7 @@ def clean_numeric(val, to_type=float):
     try:
         return to_type(numeric_part[0]) if numeric_part else 0
     except (ValueError, IndexError): return 0
+
 
 def generate_avatar_data_uri(user_id: str) -> str:
     m = hashlib.md5()
@@ -141,6 +149,7 @@ def generate_avatar_data_uri(user_id: str) -> str:
     svg += '</svg>'
     b64_svg = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
     return f"data:image/svg+xml;base64,{b64_svg}"
+
 
 def handle_aws_embedding_error(error, context="embedding generation"):
     """
@@ -231,6 +240,7 @@ def handle_aws_embedding_error(error, context="embedding generation"):
     else:
         print(f"WARNING: Unexpected error for {context}. Details: {type(error).__name__}")
 
+
 def _sanitize_embedding_error_message(message):
     """
     Sanitize error messages to remove potentially sensitive information.
@@ -246,27 +256,21 @@ def _sanitize_embedding_error_message(message):
     
     # Remove potential access keys, tokens, or other sensitive patterns
     import re
-    
     # Remove AWS access key patterns
     message = re.sub(r'AKIA[0-9A-Z]{16}', '[ACCESS_KEY_REDACTED]', message)
-    
     # Remove potential secret key patterns
     message = re.sub(r'[A-Za-z0-9/+=]{40}', '[SECRET_REDACTED]', message)
-    
     # Remove session token patterns
     message = re.sub(r'[A-Za-z0-9/+=]{100,}', '[TOKEN_REDACTED]', message)
-    
     # Remove IP addresses
     message = re.sub(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', '[IP_REDACTED]', message)
-    
     # Remove potential ARNs with account numbers
     message = re.sub(r'arn:aws:[^:]*:[^:]*:\d{12}:[^:]*', '[ARN_REDACTED]', message)
-    
     # Truncate very long messages that might contain sensitive data
     if len(message) > 200:
         message = message[:200] + "... [TRUNCATED]"
-    
     return message
+
 
 def retry_embedding_with_backoff(client, text, max_retries=2, base_delay=1.0):
     """
@@ -282,7 +286,6 @@ def retry_embedding_with_backoff(client, text, max_retries=2, base_delay=1.0):
         Embedding vector or None if all retries failed
     """
     import time
-    
     for attempt in range(max_retries + 1):
         try:
             response = client.invoke_model(
@@ -294,16 +297,12 @@ def retry_embedding_with_backoff(client, text, max_retries=2, base_delay=1.0):
                 })
             )
             response_body = json.loads(response['body'].read())
-            
             # Validate response structure
             if 'embedding' not in response_body:
                 raise ValueError("No embedding in Titan response")
-            
             return response_body['embedding']
-            
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            
             if error_code == 'ThrottlingException' and attempt < max_retries:
                 delay = base_delay * (2 ** attempt)  # Exponential backoff
                 print(f"INFO: Rate limited, retrying embedding in {delay:.1f} seconds (attempt {attempt + 1}/{max_retries + 1})")
@@ -313,12 +312,11 @@ def retry_embedding_with_backoff(client, text, max_retries=2, base_delay=1.0):
                 # Don't retry for non-throttling errors or max retries reached
                 handle_aws_embedding_error(e, "Titan embedding generation")
                 return None
-        
         except Exception as e:
             handle_aws_embedding_error(e, "Titan embedding generation")
             return None
-    
     return None
+
 
 def generate_embeddings_with_titan(client, texts):
     """
@@ -335,13 +333,11 @@ def generate_embeddings_with_titan(client, texts):
     aws_success_count = 0
     aws_fallback_count = 0
     aws_retry_count = 0
-    
     for i, text in enumerate(texts):
         try:
             if client:
                 # Use retry mechanism for rate limiting (Requirement 4.3)
                 embedding = retry_embedding_with_backoff(client, text)
-                
                 if embedding is not None:
                     embeddings.append(embedding)
                     aws_success_count += 1
@@ -354,25 +350,22 @@ def generate_embeddings_with_titan(client, texts):
                 # Client not available, use fallback (Requirement 4.4)
                 embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
                 aws_fallback_count += 1
-                
         except Exception as e:
             # Ensure processing continues with other texts (Requirement 4.5)
             print(f"WARNING: Unexpected error processing text {i+1}/{len(texts)}. "
                   f"Continuing with remaining texts. Details: {e}")
             embeddings.append(np.random.rand(VECTOR_DIM).astype(np.float32).tolist())
             aws_fallback_count += 1
-    
     # Display progress and success/failure statistics (Requirement 5.5)
     if aws_success_count > 0 or aws_fallback_count > 0:
         total_processed = aws_success_count + aws_fallback_count
         success_rate = (aws_success_count / total_processed) * 100 if total_processed > 0 else 0
         print(f"AWS Batch Stats: {aws_success_count}/{total_processed} successful ({success_rate:.1f}%), "
               f"{aws_fallback_count} fallbacks")
-        
         if aws_fallback_count > 0:
             print(f"INFO: Application continues functioning with {aws_fallback_count} fallback embeddings")
-    
     return embeddings
+
 
 # --- 1. Initialize Clients ---
 try:
@@ -553,6 +546,7 @@ except Exception as e:
 print(f"✅ Data prepared. Processing all {len(df)} records.")
 
 
+
 # --- 4. Process Data in Batches (Generate Embeddings and Load to Valkey) ---
 print("\n--- Generating Product Embeddings and Loading to Valkey in Batches ---")
 for i in tqdm(range(0, len(df), BATCH_SIZE), desc="Processing Batches"):
@@ -595,6 +589,8 @@ for i in tqdm(range(0, len(df), BATCH_SIZE), desc="Processing Batches"):
     pipe.execute()
 
 print("✅ Data loading and embedding generation process finished successfully.")
+
+
 
 # --- 5. Final Instruction: Create the Full Index (VECTOR_DIM is dynamic) ---
 print(f"\n--- Preparing index '{INDEX_NAME}'... ---")
@@ -659,6 +655,8 @@ except Exception as e:
     print(f"AI Mode: {AI_MODE}, Vector Dimension: {VECTOR_DIM}")
     print(f"Details: {e}")
     exit(1)
+ 
+ 
  
  # --- 6. Create Users ---
 print("\n--- Loading Persona Dataset ---")
@@ -741,6 +739,7 @@ for i in tqdm(range(0, len(df), PERSONA_BATCH_SIZE), desc="Processing Persona Ba
                 "avatar": generate_avatar_data_uri(user_id)
             }
             pipe.hset(user_id, mapping=persona_data)
+
 
 try:
     print("Saving personas to Valkey ...")

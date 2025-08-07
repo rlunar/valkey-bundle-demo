@@ -28,7 +28,7 @@ This project demonstrates a modern, AI-powered e-commerce search experience usin
 ## Project Structure
 
 ```bash
-valkey-search-demo/
+valkey-bundle-demo/
 ├── app.py                 # Main Flask application
 ├── load_data.py          # Data loading and embedding generation
 ├── requirements.txt      # Python dependencies
@@ -119,7 +119,7 @@ query = f"({tag_filter})=>[KNN 25 @embedding $user_vec]"
 
 ```python
 def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5):
-    # Balance relevance vs diversity
+    # Maximal Marginal Relevance reranking to diversify results
     # lambda_param: 1.0 = pure relevance, 0.0 = pure diversity
 ```
 
