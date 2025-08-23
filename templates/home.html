@@ -12,7 +12,7 @@
         <a href="{{ url_for('product_detail', product_id=product.id) }}" class="product-card">
             <img src="{{ product.thumbnail }}" alt="{{ product.name }}" class="product-thumbnail">
             <div class="product-info">
-                <p class="product-brand">{{ product.brand }}</p>
+                <p class="product-brand">{{ product.brand }}{% if product.viewed %} <span class="viewed-indicator">👀</span>{% endif %}</p>
                 <h3 class="product-name">{{ product.name }}</h3>
                 <p class="product-price">$ {{ "%.2f"|format(product.price|float) }}</p>
             </div>

@@ -13,6 +13,7 @@ The application allows users to log in as different "personas" and receive perso
 * **AI-Powered Content:** Leveraging advanced language models to generate personalized sales pitches.  
 * **High-Performance Caching:** Using Valkey to cache LLM responses, dramatically reducing latency.  
 * **Real-time UI Updates:** Using Server-Sent Events (SSE) to push AI-generated content to the browser without a page refresh.
+* **Viewed Products Tracking:** Using Valkey Bloom filters to efficiently track which products each user has viewed, with visual indicators (👀) on product cards.
 
 ## **Prerequisites**
 
@@ -259,6 +260,20 @@ python3 load_data.py --cluster
 # Flush existing data before loading
 python3 load_data.py --flush
 ```
+
+### **Step 4.5: Initialize Bloom Filters (Optional)**
+
+To enable the "viewed products" feature that shows a 👀 emoji next to products you've already seen:
+
+```bash
+# Initialize Bloom filters for tracking viewed products
+python3 init_bloom_filters.py
+
+# Add --cluster if using Valkey Cluster
+python3 init_bloom_filters.py --cluster
+```
+
+This step creates Bloom filters for each user to efficiently track which products they have viewed. The feature works without this step, but initializing the filters provides better performance.
 ### **Step 5: Run the Web Application**
 
 Finally, run the application.

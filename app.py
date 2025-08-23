@@ -187,6 +187,30 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
     return selected_indices
 
 
+# --- Bloom Filter Helpers ---
+def mark_product_viewed(user_id, product_id):
+    """Mark a product as viewed by a user using Bloom filter."""
+    bloom_key = f"viewed:{user_id}"
+    try:
+        valkey_client.bf().add(bloom_key, product_id)
+    except Exception as e:
+        print(f"WARNING: Failed to mark product {product_id} as viewed for user {user_id}: {e}")
+
+def is_product_viewed(user_id, product_id):
+    """Check if a product has been viewed by a user using Bloom filter."""
+    bloom_key = f"viewed:{user_id}"
+    try:
+        return valkey_client.bf().exists(bloom_key, product_id)
+    except Exception as e:
+        print(f"WARNING: Failed to check if product {product_id} was viewed by user {user_id}: {e}")
+        return False
+
+def add_viewed_status_to_products(user_id, products):
+    """Add 'viewed' status to a list of products for a user."""
+    for product in products:
+        product['viewed'] = is_product_viewed(user_id, product['id'])
+    return products
+
 # --- Data Helpers (No Changes) ---
 def get_user_profile(user_id):
     if not user_id:
@@ -624,6 +648,8 @@ def home():
     keys = list(valkey_client.scan_iter("product:*"))
     picks = random.sample(keys, min(5, len(keys)))
     products = get_products_by_ids(picks)
+    if products:
+        products = add_viewed_status_to_products(uid, products)
     if user and products:
         get_personalized_descriptions_async(user, products)
     return render_template("home.html", user=user, products=products)
@@ -673,6 +699,8 @@ def search():
     else:
         products = []
 
+    if products:
+        products = add_viewed_status_to_products(uid, products)
     if user and products:
         get_personalized_descriptions_async(user, products)
     return render_template("home.html", user=user, products=products, search_query=query_text)
@@ -710,6 +738,10 @@ def product_detail(product_id):
     if not items:
         return "Not found", 404
     product = items[0]
+    
+    # Mark this product as viewed
+    mark_product_viewed(uid, product_id)
+    
     cache_key = f"llm_cache:user:{uid}:product:{product_id}"
     desc = valkey_client.get(cache_key)
     if not valkey_client.exists(cache_key):
@@ -724,6 +756,7 @@ def product_detail(product_id):
         res_sim = ft.search(q_prod, {"product_vec": product_emb_bytes})
         sim_ids = [f"{d.id}" for d in res_sim.docs if d.id != key][:5] # Exclude self
         similar_products = get_products_by_ids(sim_ids)
+        similar_products = add_viewed_status_to_products(uid, similar_products)
         get_personalized_descriptions_async(user, similar_products)
     # Find recommended products based on user embedding
     q_user = Query("*=>[KNN 25 @embedding $user_vec]").return_field("id").dialect(2)
@@ -742,6 +775,7 @@ def product_detail(product_id):
         selected_indices = mmr_rerank(np.frombuffer(user["embedding"], dtype=np.float32), candidate_embs, top_n=5)
         recommended_ids = [candidate_ids[i] for i in selected_indices]
         recommended_products = get_products_by_ids(recommended_ids)
+        recommended_products = add_viewed_status_to_products(uid, recommended_products)
         get_personalized_descriptions_async(user, recommended_products)
     else:
         recommended_products = []
