@@ -480,6 +480,7 @@ except Exception as e:
         print("Please check your Valkey connection details and ensure AI libraries are installed.")
     exit(1)
 
+
 # --- 2. Prepare Nodes for Flushing ---
 if FLUSH_DATA:
     print("\n--- Flushing server(s) ...")
@@ -712,16 +713,17 @@ for i in tqdm(range(0, len(df), PERSONA_BATCH_SIZE), desc="Processing Persona Ba
             if not isinstance(embedding_vector, np.ndarray):
                 embedding_vector = np.array(embedding_vector, dtype=np.float32)
             
-            # Prepare data for Valkey Hash. The purchase_history is already a JSON string from the CSV.
+            # Prepare data for Valkey JSON. The purchase_history is already a JSON string from the CSV.
             persona_data = {
                 "id": user_id,
                 "name": persona.get("name", f"User {user_id}"),
                 "bio": persona.get("bio", ""),
-                "purchase_history": persona.get("purchase_history", "[]"),
+                "purchase_history": json.loads(persona.get("purchase_history", "[]")),
                 "embedding": embedding_vector.tobytes(),
+                # "embedding": embedding_vector.tolist(),
                 "avatar": generate_avatar_data_uri(user_id)
             }
-            pipe.hset(user_id, mapping=persona_data)
+            pipe.execute_command("JSON.SET", user_id, "$", json.dumps(persona_data))
             
         except Exception as e:
             # Individual persona error handling (Requirement 5.3)
@@ -734,11 +736,11 @@ for i in tqdm(range(0, len(df), PERSONA_BATCH_SIZE), desc="Processing Persona Ba
                 "id": user_id,
                 "name": persona.get("name", f"User {user_id}"),
                 "bio": persona.get("bio", ""),
-                "purchase_history": persona.get("purchase_history", "[]"),
-                "embedding": fallback_embedding.tobytes(),
+                "purchase_history": json.loads(persona.get("purchase_history", "[]")),
+                "embedding": fallback_embedding.tolist(),
                 "avatar": generate_avatar_data_uri(user_id)
             }
-            pipe.hset(user_id, mapping=persona_data)
+            pipe.execute_command("JSON.SET", user_id, "$", json.dumps(persona_data))
 
 
 try:

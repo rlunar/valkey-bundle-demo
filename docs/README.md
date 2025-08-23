@@ -232,8 +232,9 @@ docker pull valkey/valkey-bundle:8-alpine
 docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle:8-alpine
 
 # 2. Setup Python environment
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 
 # 3. Install and setup Ollama (local mode)
