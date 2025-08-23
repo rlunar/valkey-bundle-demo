@@ -191,17 +191,24 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
 def get_user_profile(user_id):
     if not user_id:
         return None
-    # Assuming user IDs are prefixed for clarity, though not strictly required by HGETALL
-    data = valkey_client.hgetall(f"user:{user_id}")
+    # Get JSON data from Valkey
+    data = valkey_client.execute_command("JSON.GET", f"user:{user_id}", "$")
     if not data:
         return None
-    return {
-        "id":        user_id,
-        "name":      data.get(b'name', b'').decode(),
-        "bio":       data.get(b'bio', b'').decode(),
-        "avatar":    data.get(b'avatar', b'').decode(),
-        "embedding": data.get(b'embedding'),
-    }
+    
+    # Parse JSON response
+    try:
+        parsed_data = json.loads(data)[0]  # JSON.GET with $ returns array
+        return {
+            "id":        user_id,
+            "name":      parsed_data.get('name', ''),
+            "bio":       parsed_data.get('bio', ''),
+            "avatar":    parsed_data.get('avatar', ''),
+            "embedding": np.array(parsed_data.get('embedding', []), dtype=np.float32).tobytes(),
+        }
+    except (json.JSONDecodeError, IndexError, KeyError) as e:
+        print(f"WARNING: Failed to parse user profile JSON for {user_id}: {e}")
+        return None
 
 
 def get_products_by_ids(ids):

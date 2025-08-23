@@ -719,8 +719,8 @@ for i in tqdm(range(0, len(df), PERSONA_BATCH_SIZE), desc="Processing Persona Ba
                 "name": persona.get("name", f"User {user_id}"),
                 "bio": persona.get("bio", ""),
                 "purchase_history": json.loads(persona.get("purchase_history", "[]")),
-                "embedding": embedding_vector.tobytes(),
-                # "embedding": embedding_vector.tolist(),
+                # "embedding": embedding_vector.tobytes(),
+                "embedding": embedding_vector.tolist(),
                 "avatar": generate_avatar_data_uri(user_id)
             }
             pipe.execute_command("JSON.SET", user_id, "$", json.dumps(persona_data))
@@ -737,6 +737,7 @@ for i in tqdm(range(0, len(df), PERSONA_BATCH_SIZE), desc="Processing Persona Ba
                 "name": persona.get("name", f"User {user_id}"),
                 "bio": persona.get("bio", ""),
                 "purchase_history": json.loads(persona.get("purchase_history", "[]")),
+                # "embedding": embedding_vector.tobytes(),
                 "embedding": fallback_embedding.tolist(),
                 "avatar": generate_avatar_data_uri(user_id)
             }
