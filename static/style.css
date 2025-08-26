@@ -159,7 +159,7 @@ header {
     padding: 15px;
 }
 .product-brand {
-    font-size: 12px;
+    font-size: 24px;
     color: #6b778c;
     margin: 0 0 5px 0;
     text-transform: uppercase;
@@ -283,7 +283,7 @@ header {
 
 /* Viewed indicator styling */
 .viewed-indicator {
-    font-size: 14px;
+    font-size: 24px;
     margin-left: 5px;
     opacity: 0.8;
 }

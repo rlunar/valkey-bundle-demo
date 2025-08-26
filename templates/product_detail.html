@@ -6,7 +6,7 @@
             <img src="{{ product.thumbnail }}" alt="{{ product.name }}" class="product-detail-image">
         </div>
         <div class="product-main-info">
-            <p class="product-brand">{{ product.brand }}</p>
+            <p class="product-brand">{{ product.brand }}{% if product.viewed %} <span class="viewed-indicator">👀</span>{% endif %}</p>
             <h1>{{ product.name }}</h1>
             <p class="product-price">$ {{ "%.2f"|format(product.price|float) }}</p>
             

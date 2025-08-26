@@ -739,6 +739,9 @@ def product_detail(product_id):
         return "Not found", 404
     product = items[0]
     
+    # Check if product was previously viewed before marking as viewed
+    product['viewed'] = is_product_viewed(uid, product_id)
+    
     # Mark this product as viewed
     mark_product_viewed(uid, product_id)
     
