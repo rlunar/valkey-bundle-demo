@@ -261,33 +261,13 @@ Response:
     "bio": "Tech enthusiast and early adopter who loves cutting-edge gadgets...",
     "avatar": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgODAgODAi...",
     "purchase_history": [
-      {
-        "product_id": 456,
-        "date": "2024-12-15",
-        "rating": 5,
-        "price": 123.45
-      },
-      {
-        "product_id": 789,
-        "date": "2024-11-20",
-        "rating": 4,
-        "price": 234.56
-      }
+      {"product_id": 456, "date": "2024-12-15", "rating": 5, "price": 123.45},
+      {"product_id": 789, "date": "2024-11-20", "rating": 4, "price": 234.56}
     ],
     "preferences": {
-      "categories": [
-        "electronics",
-        "gaming"
-      ],
-      "price_range": {
-        "min": 50,
-        "max": 500
-      },
-      "brands": [
-        "Apple",
-        "Samsung",
-        "Sony"
-      ]
+      "categories": ["electronics", "gaming" ],
+      "price_range": { "min": 50, "max": 500 },
+      "brands": ["Apple", "Samsung", "Sony"]
     }
   }
 ]
@@ -298,7 +278,10 @@ Response:
 What if I want to only find products over $100 and bellow $200? Let's use [JSONPath](https://goessner.net/articles/JsonPath/)
 
 ```bash
-valkey-cli -h localhost -p 6379 -3 JSON.GET user:6379 '$.purchase_history[?(@.price > 100 && @.price < 200)]' | jq -C '.'
+valkey-cli -h localhost -p 6379 -3 \
+JSON.GET user:6379 \
+'$.purchase_history[?(@.price > 100 && @.price < 200)]' \
+| jq -C '.'
 ```
 
 Response:
@@ -319,7 +302,8 @@ Response:
 If I want to update the rating for product 789, I can do so:
 
 ```bash
-JSON.SET user:6379 $.purchase_history[?(@.product_id==789)].rating 4.5
+JSON.SET user:6379 \
+$.purchase_history[?(@.product_id==789)].rating 4.5
 ```
 
 Response:
@@ -333,7 +317,10 @@ OK
 Verify the change by getting the product details:
 
 ```bash
-valkey-cli -h localhost -p 6379 -3  JSON.GET user:6379 '$.purchase_history[?(@.product_id==789)]' | jq -C '.'
+valkey-cli -h localhost -p 6379 -3 \
+JSON.GET user:6379 \
+'$.purchase_history[?(@.product_id==789)]' \
+| jq -C '.'
 ```
 
 Response:
@@ -378,7 +365,7 @@ Probabilistic data structure that provides memory-efficient membership testing.
 
 ---
 
-Python 🐍 example
+Bloom Filters 🐍 example
 
 ```python
 # Initialize Bloom filter for each user
@@ -448,21 +435,18 @@ FT.CREATE products ON HASH PREFIX 1 product: SCHEMA
 
 ---
 
-Python 🐍 example
+### Hybrid search 🐍
 
 ```python
 # Hybrid search query combining filters + vector similarity
 def search_products(user_embedding, tags, region=None):
     # Build tag filter
     tag_filter = " ".join(f"@search_tags:{{{tag}}}" for tag in tags)
-    
     # Add region filter if specified
     if region:
         tag_filter += f" @region:{{{region}}}"
-    
     # Combine with vector search
     query = f"({tag_filter})=>[KNN 25 @embedding $user_vec]"
-    
     return valkey_client.ft("products").search(
         Query(query).return_fields("id", "name", "price", "rating")
                    .sort_by("_score", asc=False)
@@ -478,6 +462,8 @@ def search_products(user_embedding, tags, region=None):
 What is a Vector?
 
 ![Vector-Despicable-Me](https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExdmk5cjVjaWY0MGZ6NTVmOHdpZWpyY284bXV5dDhwdmphendlaHJ3eCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tyttpGTMMCADZR2YPZe/giphy.gif)
+
+A [vector](https://en.wikipedia.org/wiki/Vector_(mathematics_and_physics)) is a quantity that has both magnitude (size) and direction. It's a fundamental concept in mathematics and physics, used to describe quantities that can't be fully represented by a single number alone.
 
 ---
 
@@ -515,7 +501,7 @@ What is a Vector?
 
 ### Maximal Marginal Relevance (MMR)
 
-To avoid showing too many similar products, we use MMR for result diversification, Balance relevance vs. diversity 🐍
+To avoid showing too many similar products, we use MMR for result diversification: Balance relevance VS Diversity 🐍
 
 ```python
 def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5):
@@ -583,9 +569,7 @@ personas = {
 
 Managing user sessions, shopping carts, and temporary state across requests while maintaining performance.
 
-### The Solution: Valkey Strings and Hashes
-
-Python 🐍 example
+### The Solution: Valkey Strings and Hashes 🐍
 
 ```python
 # Session storage
@@ -630,9 +614,7 @@ EXPIRE session:abc123 3600  # 1 hour TTL
 
 AI-generated personalized product descriptions are expensive to compute and can have high latency, especially when using cloud APIs.
 
-### The Solution: Intelligent Caching Strategy
-
-Python 🐍 example
+### The Solution: Intelligent Caching Strategy 🐍
 
 ```python
 # Cache key structure
@@ -674,9 +656,7 @@ def get_personalized_description(user_profile, product):
 
 ---
 
-### Cache Performance Metrics
-
-Python 🐍 example
+### Cache Performance Metrics 🐍
 
 ```python
 # Cache hit rate monitoring
@@ -691,9 +671,7 @@ def track_cache_performance():
 
 ---
 
-### Asynchronous Cache Warming
-
-Python 🐍 example
+### Asynchronous Cache Warming 🐍
 
 ```python
 def warm_cache_async(user_profile, products):
@@ -746,9 +724,7 @@ False negative rate: 0% (guaranteed)
 
 ### Scalability Patterns
 
-#### Horizontal Scaling with Valkey Cluster
-
-Python 🐍 example
+#### Horizontal Scaling with Valkey Cluster 🐍
 
 ```python
 # Cluster configuration
@@ -757,9 +733,7 @@ startup_nodes = [
     ClusterNode(host="valkey-node-2", port=6380),
     ClusterNode(host="valkey-node-3", port=6381)
 ]
-
 client = ValkeyCluster(startup_nodes=startup_nodes)
-
 # Data automatically sharded across nodes
 # Hash tags ensure related data stays together
 HSET {user:101}:profile name "Roberto Luna-Rojas"
@@ -773,9 +747,7 @@ BF.ADD {user:101}:viewed product:456
 
 ### Error Handling and Resilience
 
-The application implements comprehensive error handling, especially for AI backends:
-
-Python 🐍 example
+The application implements comprehensive error handling, especially for AI backends 🐍
 
 ```python
 # Circuit breaker pattern for AWS Bedrock
@@ -810,9 +782,7 @@ class AWSCircuitBreaker:
 
 ### Graceful Degradation
 
-When AI services are unavailable, the application continues functioning:
-
-Python 🐍 example
+When AI services are unavailable, the application continues functioning 🐍
 
 ```python
 def generate_description_with_fallback(user_name, product_name):
@@ -919,3 +889,5 @@ The key insight is that modern applications require diverse data access patterns
 Whether you're building recommendation engines, real-time analytics, or AI-powered applications, Valkey-bundle offers the performance, flexibility, and developer experience needed for success in today's demanding application landscape.
 
 *For more information about Valkey-bundle and to explore the complete source code of this demonstration, visit: https://valkey.io/blog/valkey-bundle-one-stop-shop-for-low-latency-modern-applications/ by Roberto Luna-Rojas*
+
+Demo enhanced from original [Valkey Search Demo](https://github.com/PingXie/valkey-search-demo) by Ping Xie [PingXie](https://github.com/PingXie)
