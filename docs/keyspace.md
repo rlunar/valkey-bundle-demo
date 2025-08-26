@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Welcome to an exploration of **Valkey-bundle**, a comprehensive solution for building modern, low-latency applications. Today we'll dive into a real-world Python Flask application that demonstrates how Valkey's diverse data structures work together to create a sophisticated, AI-powered e-commerce search experience.
+Welcome to an exploration of **Valkey-bundle**, a comprehensive solution for building modern, low-latency applications. Today we'll dive into a real-world Python 🐍 Flask application that demonstrates how [Valkey](https://valkey.io/)'s diverse data structures work together to create a sophisticated, AI-powered e-commerce search experience.
 
 This presentation showcases how different components of the Valkey ecosystem solve specific challenges in modern application development, from vector similarity search to session management and intelligent caching.
 
@@ -11,10 +11,9 @@ This presentation showcases how different components of the Valkey ecosystem sol
 Valkey-bundle is a one-stop solution that packages multiple Valkey modules together, providing:
 
 - **Core Valkey**: High-performance in-memory data store
-- **Valkey-Search**: Full-text search and vector similarity capabilities  
+- **Valkey-Search**: Hybrid search and vector similarity capabilities  
 - **Valkey-JSON**: Native JSON document storage and manipulation
 - **Valkey-Bloom**: Probabilistic data structures for efficient membership testing
-- **Additional modules**: Time series, graph processing, and more
 
 The bundle eliminates the complexity of managing multiple components while ensuring compatibility and optimal performance.
 
@@ -35,7 +34,7 @@ Our demonstration application is a personalized product search system that combi
 │ • User Sessions │◄──►│ • Product Hashes │◄──►│ • TinyLlama     │
 │ • Search Logic  │    │ • User JSON      │    │ • Gemini        │
 │ • Caching       │    │ • Vector Search  │    │ • AWS Bedrock   │
-│ • Bloom Filters │    │ • Bloom Filters  │    │                 │
+│ • User history  │    │ • Bloom Filters  │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
@@ -52,6 +51,8 @@ Storing complex product data with multiple attributes while maintaining fast acc
 ### The Solution: Valkey Hashes
 
 Products are stored as hash structures, providing efficient field-level access:
+
+Python 🐍 example
 
 ```python
 # Product storage structure
@@ -129,11 +130,14 @@ Storing complex user profiles with nested data structures, purchase history, and
 
 Users are stored as native JSON documents, enabling rich data structures:
 
+Python 🐍 example
+
 ```python
 # User profile structure
 user_profile = {
     "id": "101",
-    "name": "Roberto Luna",
+    "name": "Roberto Luna-Rojas",
+    "country": "Mexico 🇲🇽"
     "bio": "Tech enthusiast and early adopter who loves cutting-edge gadgets...",
     "avatar": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgODAgODAi...",
     "purchase_history": [
@@ -148,7 +152,7 @@ user_profile = {
     "embedding": [0.1234, -0.5678, 0.9012, ...] // User preference vector
 }
 
-# Stored as: JSON.SET user:101 $ '{"id":"101","name":"Alex Chen",...}'
+# Stored as: JSON.SET user:101 $ '{"id":"101","name":"Roberto Luna-Rojas",...}'
 ```
 
 ### Why JSON?
@@ -203,6 +207,8 @@ Efficiently tracking which products each user has viewed without storing massive
 ### The Solution: Bloom Filters
 
 Probabilistic data structure that provides memory-efficient membership testing:
+
+Python 🐍 example
 
 ```python
 # Initialize Bloom filter for each user
@@ -264,7 +270,7 @@ FT.CREATE products ON HASH PREFIX 1 product: SCHEMA
   embedding VECTOR HNSW 6 TYPE FLOAT32 DIM 1024 DISTANCE_METRIC COSINE
 ```
 
-Python example
+Python 🐍 example
 
 ```python
 # Hybrid search query combining filters + vector similarity
@@ -321,6 +327,8 @@ What is a Vector?
 
 To avoid showing too many similar products, we use MMR for result diversification:
 
+Python 🐍 example
+
 ```python
 def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5):
     """
@@ -360,6 +368,8 @@ def mmr_rerank(query_embedding, candidate_embeddings, lambda_param=0.7, top_n=5)
 
 The system uses detailed user personas to tailor search results:
 
+Python 🐍 example
+
 ```python
 # Example personas
 personas = {
@@ -396,10 +406,14 @@ Managing user sessions, shopping carts, and temporary state across requests whil
 
 ### The Solution: Valkey Strings and Hashes
 
+Python 🐍 example
+
 ```python
 # Session storage
 session_key = f"session:{session_id}"
+```
 
+```bash
 # Store session data as hash
 HSET session:abc123 
   user_id 101
@@ -436,6 +450,8 @@ EXPIRE session:abc123 3600  # 1 hour TTL
 AI-generated personalized product descriptions are expensive to compute and can have high latency, especially when using cloud APIs.
 
 ### The Solution: Intelligent Caching Strategy
+
+Python 🐍 example
 
 ```python
 # Cache key structure
@@ -476,6 +492,8 @@ def get_personalized_description(user_profile, product):
 
 ### Cache Performance Metrics
 
+Python 🐍 example
+
 ```python
 # Cache hit rate monitoring
 def track_cache_performance():
@@ -489,6 +507,8 @@ def track_cache_performance():
 ```
 
 ### Asynchronous Cache Warming
+
+Python 🐍 example
 
 ```python
 def warm_cache_async(user_profile, products):
@@ -543,12 +563,15 @@ def warm_cache_async(user_profile, products):
 ### Scalability Patterns
 
 #### Horizontal Scaling with Valkey Cluster
+
+Python 🐍 example
+
 ```python
 # Cluster configuration
 startup_nodes = [
     ClusterNode(host="valkey-node-1", port=6379),
-    ClusterNode(host="valkey-node-2", port=6379),
-    ClusterNode(host="valkey-node-3", port=6379)
+    ClusterNode(host="valkey-node-2", port=6380),
+    ClusterNode(host="valkey-node-3", port=6381)
 ]
 
 client = ValkeyCluster(startup_nodes=startup_nodes)
@@ -576,6 +599,8 @@ BF.ADD {user:101}:viewed product:456
 ### Error Handling and Resilience
 
 The application implements comprehensive error handling, especially for AI backends:
+
+Python 🐍 example
 
 ```python
 # Circuit breaker pattern for AWS Bedrock
@@ -607,7 +632,10 @@ class AWSCircuitBreaker:
 ```
 
 ### Graceful Degradation
+
 When AI services are unavailable, the application continues functioning:
+
+Python 🐍 example
 
 ```python
 def generate_description_with_fallback(user_name, product_name):
@@ -626,6 +654,7 @@ def generate_description_with_fallback(user_name, product_name):
 ## Development and Deployment
 
 ### Local Development Setup
+
 ```bash
 # Start Valkey-bundle
 docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle
@@ -644,6 +673,7 @@ flask run --host=0.0.0.0 --port=5001
 ```
 
 ### Production Considerations
+
 - **Memory Planning**: Size Valkey instances based on dataset and cache requirements
 - **Backup Strategy**: Regular RDB snapshots + AOF for durability
 - **Monitoring**: Track cache hit rates, search latency, and memory usage
@@ -668,6 +698,7 @@ flask run --host=0.0.0.0 --port=5001
 ### When to Choose Valkey-Bundle
 
 ✅ **Perfect For:**
+
 - Real-time applications requiring low latency
 - AI/ML applications with vector similarity search
 - Applications with diverse data access patterns
@@ -676,6 +707,7 @@ flask run --host=0.0.0.0 --port=5001
 - Analytics and recommendation engines
 
 ⚠️ **Consider Alternatives For:**
+
 - Applications requiring strong consistency guarantees
 - Complex relational queries with joins
 - Long-term analytical data warehousing
@@ -684,6 +716,7 @@ flask run --host=0.0.0.0 --port=5001
 ### The Future of Low-Latency Applications
 
 Valkey-bundle represents the evolution toward:
+
 - **Unified Data Platforms**: Reducing operational complexity
 - **AI-Native Infrastructure**: Built-in support for vector operations
 - **Edge Computing**: Fast, local data processing
