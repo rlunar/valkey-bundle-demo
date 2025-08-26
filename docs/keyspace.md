@@ -98,10 +98,31 @@ Storing the value for product 123456789
 HSET product:123456789 'id' 123456789 'name' 'Wireless Bluetooth Headphones' 'brand' 'TechAudio' 'main_category' 'Electronics' 'sub_category' 'Audio' 'price' 89.99 'rating' 4.5 'review_count' 1247 'search_tags' 'wireless,bluetooth,headphones,audio,music' 'region' 'NA'
 ```
 
+Response:
+
+```bash
+(integer) 10
+```
+
 Retrieving the value for product 123456789
 
 ```bash
 HGETALL product:123456789
+```
+
+Response:
+
+```bash
+ 1# "id" => "123456789"
+ 2# "name" => "Wireless Bluetooth Headphones"
+ 3# "brand" => "TechAudio"
+ 4# "main_category" => "Electronics"
+ 5# "sub_category" => "Audio"
+ 6# "price" => "89.99"
+ 7# "rating" => "4.5"
+ 8# "review_count" => "1247"
+ 9# "search_tags" => "wireless,bluetooth,headphones,audio,music"
+10# "region" => "NA"
 ```
 
 Or retrieving specific field to reduce latency and network transfer
@@ -110,10 +131,24 @@ Or retrieving specific field to reduce latency and network transfer
 HGET product:123456789 name
 ```
 
+Response:
+
+```bash
+"Wireless Bluetooth Headphones"
+```
+
 Or retrieving multiple cherry picked fields
 
 ```bash
 HMGET product:123456789 name price rating
+```
+
+Response:
+
+```bash
+1) "Wireless Bluetooth Headphones"
+2) "89.99"
+3) "4.5"
 ```
 
 
@@ -128,7 +163,7 @@ Storing complex user profiles with nested data structures, purchase history, and
 
 ### The Solution: Valkey-JSON
 
-Users are stored as native JSON documents, enabling rich data structures:
+Users are stored as native [JSON](https://www.json.org/json-en.html) documents, enabling rich data structures:
 
 Python 🐍 example
 
@@ -168,7 +203,13 @@ user_profile = {
 Store the user JSON document
 
 ```bash
-JSON.SET user:6379 $ '{"id": 6379, "name": "Roberto Luna-Rojas", "bio": "Tech enthusiast and early adopter who loves cutting-edge gadgets...", "avatar": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgODAgODAi...", "purchase_history": [ {"product_id": 456, "date": "2024-12-15", "rating": 5, "price": 123.45}, {"product_id": 789, "date": "2024-11-20", "rating": 4, "price": 234.56} ], "preferences": { "categories": ["electronics", "gaming"], "price_range": {"min": 50, "max": 500}, "brands": ["Apple", "Samsung", "Sony"]}}'
+JSON.SET user:6379 $ '{"id": 6379, "name": "Roberto Luna-Rojas", "country": "Mexico 🇲🇽", "bio": "Tech enthusiast and early adopter who loves cutting-edge gadgets...", "avatar": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgODAgODAi...", "purchase_history": [ {"product_id": 456, "date": "2024-12-15", "rating": 5, "price": 123.45}, {"product_id": 789, "date": "2024-11-20", "rating": 4, "price": 234.56} ], "preferences": { "categories": ["electronics", "gaming"], "price_range": {"min": 50, "max": 500}, "brands": ["Apple", "Samsung", "Sony"]}}'
+```
+
+Response:
+
+```bash
+OK
 ```
 
 Retrieve the whole JSON document
@@ -177,10 +218,97 @@ Retrieve the whole JSON document
 valkey-cli -h localhost -p 6379 -3 JSON.GET user:6379 $ | jq -C '.'
 ```
 
-What if I want to only find products over $100 and bellow $200? Let's use JSONPath
+Response:
+
+```json
+[
+  {
+    "id": 6379,
+    "name": "Roberto Luna-Rojas",
+    "country": "Mexico 🇲🇽",
+    "bio": "Tech enthusiast and early adopter who loves cutting-edge gadgets...",
+    "avatar": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgODAgODAi...",
+    "purchase_history": [
+      {
+        "product_id": 456,
+        "date": "2024-12-15",
+        "rating": 5,
+        "price": 123.45
+      },
+      {
+        "product_id": 789,
+        "date": "2024-11-20",
+        "rating": 4,
+        "price": 234.56
+      }
+    ],
+    "preferences": {
+      "categories": [
+        "electronics",
+        "gaming"
+      ],
+      "price_range": {
+        "min": 50,
+        "max": 500
+      },
+      "brands": [
+        "Apple",
+        "Samsung",
+        "Sony"
+      ]
+    }
+  }
+]
+```
+
+What if I want to only find products over $100 and bellow $200? Let's use [JSONPath](https://goessner.net/articles/JsonPath/)
 
 ```bash
 valkey-cli -h localhost -p 6379 -3 JSON.GET user:6379 '$.purchase_history[?(@.price > 100 && @.price < 200)]' | jq -C '.'
+```
+
+Response:
+
+```json
+[
+  {
+    "product_id": 456,
+    "date": "2024-12-15",
+    "rating": 5,
+    "price": 123.45
+  }
+]
+```
+
+If I want to update the rating for product 789, I can do so:
+
+```bash
+JSON.SET user:6379 $.purchase_history[?(@.product_id==789)].rating 4.5
+```
+
+Response:
+
+```bash
+OK
+```
+
+Verify the change by getting the product details:
+
+```bash
+valkey-cli -h localhost -p 6379 -3  JSON.GET user:6379 '$.purchase_history[?(@.product_id==789)]' | jq -C '.'
+```
+
+Response:
+
+```json
+[
+  {
+    "product_id": 789,
+    "date": "2024-11-20",
+    "rating": 4.5,
+    "price": 234.56
+  }
+]
 ```
 
 ### User Embedding Generation
