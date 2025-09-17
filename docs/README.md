@@ -229,7 +229,7 @@ FT.CREATE products ON HASH PREFIX 1 product: SCHEMA
 docker pull valkey/valkey-bundle:8-alpine
 
 # 1. Start Valkey
-docker run -d --rm --name valkey-demo -p 6379:6379 valkey/valkey-bundle:8-alpine
+docker run -d --rm --name valkey-demo -p 16379:6379 valkey/valkey-bundle:8-alpine
 
 # 2. Setup Python environment
 python3 -m venv .venv

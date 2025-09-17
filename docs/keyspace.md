@@ -2,6 +2,10 @@
 marp: true
 ---
 
+![valkey-bundle](../docs/valkey-bundle.png)
+
+---
+
 # Valkey-Bundle: Building Modern Low-Latency Applications
 
 ![valkey-bundle](https://valkey.io/blog/valkey-bundle-one-stop-shop-for-low-latency-modern-applications/images/valkey-bundle.png)
@@ -24,6 +28,7 @@ Valkey-bundle is a one-stop solution that packages multiple Valkey modules toget
 - **Valkey-Search**: Hybrid search and vector similarity capabilities  
 - **Valkey-JSON**: Native JSON document storage and manipulation
 - **Valkey-Bloom**: Probabilistic data structures for efficient membership testing
+- **Valkey-LDAP**: Enterprise grade authentication with existing systems
 
 The bundle eliminates the complexity of managing multiple components while ensuring compatibility and optimal performance.
 
@@ -53,6 +58,14 @@ Our demonstration application is a personalized product search system that combi
 │ • User history  │    │ • Bloom Filters  │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
+
+---
+
+# LDAP Integration
+
+Session: Deploying Valkey at Enterprise level with LDAP authentication and auditing at 13:45
+
+![Ben-Kenobi](https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExazJiYWgxbGgzOWY2Y29rODZ0N3UwamR1aGZlOGRpZmd3ODkwcHp5MCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/KI56Yfvk0785y/giphy.gif)
 
 ---
 
@@ -302,8 +315,7 @@ Response:
 If I want to update the rating for product 789, I can do so:
 
 ```bash
-JSON.SET user:6379 \
-$.purchase_history[?(@.product_id==789)].rating 4.5
+JSON.SET user:6379 $.purchase_history[?(@.product_id==789)].rating 4.5
 ```
 
 Response:
