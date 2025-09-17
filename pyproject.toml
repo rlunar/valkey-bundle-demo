@@ -1,0 +1,23 @@
+[project]
+name = "valkey-search-demo"
+version = "0.1.0"
+description = "Valkey-Powered Personalized Product Search Demo"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests==2.32.4",
+    "kaggle==1.7.4.5",
+    "ollama==0.5.1",
+    "sentence-transformers==5.0.0",
+    "valkey==6.1.0",
+    "pandas==2.3.1",
+    "numpy==2.3.2",
+    "tqdm==4.67.1",
+    "google-genai==1.27.0",
+    "google-cloud-aiplatform==1.105.0",
+    "python-dotenv==1.1.1",
+    "flask==3.1.1",
+]
+
+[tool.uv]
+dev-dependencies = []
